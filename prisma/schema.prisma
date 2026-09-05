@@ -1,0 +1,391 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ATTENDEE
+  ORGANIZER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum AuthProvider {
+  GOOGLE
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  COMPLETED
+  CANCELLED
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  EXPIRED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentProvider {
+  SSLCOMMERZ
+}
+
+enum PaymentStatus {
+  INITIATING
+  PENDING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  UNKNOWN
+}
+
+enum TicketStatus {
+  ACTIVE
+  CHECKED_IN
+  VOIDED
+  REFUNDED
+}
+
+enum RefundStatus {
+  REQUESTED
+  APPROVED
+  PROCESSING
+  SUCCEEDED
+  REJECTED
+  FAILED
+  UNKNOWN
+}
+
+enum RefundReason {
+  ATTENDEE_REQUEST
+  EVENT_CANCELLATION
+  LATE_PAYMENT
+  DUPLICATE_PAYMENT
+  ADMIN_ACTION
+}
+
+enum IdempotencyStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum JobType {
+  EXPIRE_ORDER_RESERVATION
+  RECONCILE_PAYMENT
+  RECONCILE_REFUND
+  PROCESS_EVENT_CANCELLATION
+  COMPLETE_EVENT
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+model User {
+  id                 String              @id @default(uuid()) @db.Uuid
+  email              String              @unique @db.VarChar(320)
+  displayName        String              @db.VarChar(120)
+  passwordHash       String?             @db.VarChar(255)
+  role               UserRole            @default(ATTENDEE)
+  status             UserStatus          @default(ACTIVE)
+  deletedAt          DateTime?           @db.Timestamptz(6)
+  createdAt          DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime            @updatedAt @db.Timestamptz(6)
+  identities         AuthIdentity[]
+  refreshSessions    RefreshSession[]
+  organizedEvents    Event[]             @relation("EventOrganizer")
+  orders             Order[]             @relation("OrderAttendee")
+  tickets            Ticket[]            @relation("TicketOwner")
+  checkedInTickets   Ticket[]            @relation("TicketCheckedInBy")
+  requestedRefunds   Refund[]            @relation("RefundRequester")
+  reviewedRefunds    Refund[]            @relation("RefundReviewer")
+  auditLogs          AuditLog[]          @relation("AuditActor")
+  idempotencyRecords IdempotencyRecord[]
+
+  @@index([role, status])
+  @@index([status, deletedAt])
+}
+
+model AuthIdentity {
+  id              String       @id @default(uuid()) @db.Uuid
+  userId          String       @db.Uuid
+  provider        AuthProvider
+  providerSubject String       @db.VarChar(255)
+  providerEmail   String?      @db.VarChar(320)
+  createdAt       DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(6)
+  user            User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, providerSubject])
+  @@index([userId])
+}
+
+model RefreshSession {
+  id                  String    @id @default(uuid()) @db.Uuid
+  userId              String    @db.Uuid
+  familyId            String    @db.Uuid
+  tokenHash           String    @unique @db.VarChar(255)
+  expiresAt           DateTime  @db.Timestamptz(6)
+  revokedAt           DateTime? @db.Timestamptz(6)
+  replacedBySessionId String?   @db.Uuid
+  createdAt           DateTime  @default(now()) @db.Timestamptz(6)
+  user                User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, familyId])
+  @@index([expiresAt])
+}
+
+model Event {
+  id          String       @id @default(uuid()) @db.Uuid
+  organizerId String       @db.Uuid
+  title       String       @db.VarChar(180)
+  slug        String       @unique @db.VarChar(200)
+  description String       @db.Text
+  category    String       @db.VarChar(80)
+  venue       String       @db.VarChar(160)
+  city        String       @db.VarChar(100)
+  address     String       @db.Text
+  startAt     DateTime     @db.Timestamptz(6)
+  endAt       DateTime     @db.Timestamptz(6)
+  imageUrl    String?      @db.Text
+  status      EventStatus  @default(DRAFT)
+  publishedAt DateTime?    @db.Timestamptz(6)
+  cancelledAt DateTime?    @db.Timestamptz(6)
+  completedAt DateTime?    @db.Timestamptz(6)
+  deletedAt   DateTime?    @db.Timestamptz(6)
+  createdAt   DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @db.Timestamptz(6)
+  organizer   User         @relation("EventOrganizer", fields: [organizerId], references: [id], onDelete: Restrict)
+  ticketTiers TicketTier[]
+  orders      Order[]
+  tickets     Ticket[]
+
+  @@index([organizerId, status, deletedAt])
+  @@index([status, startAt])
+  @@index([city, startAt])
+  @@index([category, startAt])
+}
+
+model TicketTier {
+  id               String    @id @default(uuid()) @db.Uuid
+  eventId          String    @db.Uuid
+  name             String    @db.VarChar(100)
+  pricePaisa       Int
+  capacity         Int
+  reservedQuantity Int       @default(0)
+  soldQuantity     Int       @default(0)
+  salesStartAt     DateTime  @db.Timestamptz(6)
+  salesEndAt       DateTime  @db.Timestamptz(6)
+  deletedAt        DateTime? @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+  event            Event     @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  orders           Order[]
+  tickets          Ticket[]
+
+  @@unique([eventId, name])
+  @@index([eventId, deletedAt])
+  @@index([eventId, salesStartAt, salesEndAt])
+}
+
+model Order {
+  id                       String           @id @default(uuid()) @db.Uuid
+  attendeeId               String           @db.Uuid
+  eventId                  String           @db.Uuid
+  ticketTierId             String           @db.Uuid
+  eventNameSnapshot        String           @db.VarChar(180)
+  ticketTierNameSnapshot   String           @db.VarChar(100)
+  unitPricePaisaSnapshot   Int
+  quantity                 Int
+  totalAmountPaisaSnapshot Int
+  currency                 String           @default("BDT") @db.Char(3)
+  status                   OrderStatus      @default(PENDING_PAYMENT)
+  reservationExpiresAt     DateTime         @db.Timestamptz(6)
+  reservationReleasedAt    DateTime?        @db.Timestamptz(6)
+  paidAt                   DateTime?        @db.Timestamptz(6)
+  refundedAt               DateTime?        @db.Timestamptz(6)
+  createdAt                DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime         @updatedAt @db.Timestamptz(6)
+  attendee                 User             @relation("OrderAttendee", fields: [attendeeId], references: [id], onDelete: Restrict)
+  event                    Event            @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  ticketTier               TicketTier       @relation(fields: [ticketTierId], references: [id], onDelete: Restrict)
+  paymentAttempts          PaymentAttempt[]
+  tickets                  Ticket[]
+  refunds                  Refund[]
+
+  @@index([attendeeId, createdAt])
+  @@index([eventId, status])
+  @@index([ticketTierId, status])
+  @@index([status, reservationExpiresAt])
+}
+
+model PaymentAttempt {
+  id                    String          @id @default(uuid()) @db.Uuid
+  orderId               String          @db.Uuid
+  sequence              Int
+  provider              PaymentProvider @default(SSLCOMMERZ)
+  merchantTransactionId String          @unique @db.VarChar(100)
+  providerSessionKey    String?         @unique @db.VarChar(255)
+  providerTransactionId String?         @unique @db.VarChar(255)
+  providerValidationId  String?         @unique @db.VarChar(255)
+  amountPaisa           Int
+  currency              String          @default("BDT") @db.Char(3)
+  status                PaymentStatus   @default(INITIATING)
+  initiatedAt           DateTime        @default(now()) @db.Timestamptz(6)
+  completedAt           DateTime?       @db.Timestamptz(6)
+  failureCode           String?         @db.VarChar(120)
+  failureMessage        String?         @db.Text
+  createdAt             DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime        @updatedAt @db.Timestamptz(6)
+  order                 Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  events                PaymentEvent[]
+  refunds               Refund[]
+
+  @@unique([orderId, sequence])
+  @@index([orderId, status])
+  @@index([status, initiatedAt])
+}
+
+model PaymentEvent {
+  id               String          @id @default(uuid()) @db.Uuid
+  paymentAttemptId String?         @db.Uuid
+  provider         PaymentProvider @default(SSLCOMMERZ)
+  providerEventKey String          @unique @db.VarChar(255)
+  eventType        String          @db.VarChar(80)
+  payload          Json
+  receivedAt       DateTime        @default(now()) @db.Timestamptz(6)
+  processedAt      DateTime?       @db.Timestamptz(6)
+  processingError  String?         @db.Text
+  paymentAttempt   PaymentAttempt? @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull)
+
+  @@index([paymentAttemptId])
+  @@index([processedAt])
+}
+
+model Ticket {
+  id            String       @id @default(uuid()) @db.Uuid
+  orderId       String       @db.Uuid
+  eventId       String       @db.Uuid
+  ticketTierId  String       @db.Uuid
+  attendeeId    String       @db.Uuid
+  sequence      Int
+  qrToken       String       @unique @db.VarChar(128)
+  status        TicketStatus @default(ACTIVE)
+  checkedInAt   DateTime?    @db.Timestamptz(6)
+  checkedInById String?      @db.Uuid
+  createdAt     DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime     @updatedAt @db.Timestamptz(6)
+  order         Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  event         Event        @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  ticketTier    TicketTier   @relation(fields: [ticketTierId], references: [id], onDelete: Restrict)
+  attendee      User         @relation("TicketOwner", fields: [attendeeId], references: [id], onDelete: Restrict)
+  checkedInBy   User?        @relation("TicketCheckedInBy", fields: [checkedInById], references: [id], onDelete: Restrict)
+
+  @@unique([orderId, sequence])
+  @@index([eventId, status])
+  @@index([attendeeId, createdAt])
+}
+
+model Refund {
+  id               String          @id @default(uuid()) @db.Uuid
+  orderId          String          @db.Uuid
+  paymentAttemptId String?         @db.Uuid
+  requestedById    String?         @db.Uuid
+  reviewedById     String?         @db.Uuid
+  reason           RefundReason
+  idempotencyKey   String          @unique @db.VarChar(255)
+  providerRefundId String?         @unique @db.VarChar(255)
+  amountPaisa      Int
+  currency         String          @default("BDT") @db.Char(3)
+  status           RefundStatus    @default(REQUESTED)
+  requestedAt      DateTime        @default(now()) @db.Timestamptz(6)
+  reviewedAt       DateTime?       @db.Timestamptz(6)
+  processedAt      DateTime?       @db.Timestamptz(6)
+  completedAt      DateTime?       @db.Timestamptz(6)
+  failureCode      String?         @db.VarChar(120)
+  failureMessage   String?         @db.Text
+  createdAt        DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime        @updatedAt @db.Timestamptz(6)
+  order            Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  paymentAttempt   PaymentAttempt? @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+  requestedBy      User?           @relation("RefundRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  reviewedBy       User?           @relation("RefundReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
+
+  @@unique([orderId, reason])
+  @@index([orderId, status])
+  @@index([status, requestedAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @db.Uuid
+  action     String   @db.VarChar(160)
+  entityType String   @db.VarChar(80)
+  entityId   String   @db.Uuid
+  metadata   Json?
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+  actor      User?    @relation("AuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([entityType, entityId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+}
+
+model IdempotencyRecord {
+  id             String            @id @default(uuid()) @db.Uuid
+  userId         String?           @db.Uuid
+  scope          String            @db.VarChar(120)
+  key            String            @db.VarChar(255)
+  requestHash    String            @db.VarChar(128)
+  status         IdempotencyStatus @default(PROCESSING)
+  responseStatus Int?
+  responseBody   Json?
+  resourceId     String?           @db.Uuid
+  expiresAt      DateTime          @db.Timestamptz(6)
+  createdAt      DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(6)
+  user           User?             @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([scope, key])
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+}
+
+model Job {
+  id               String    @id @default(uuid()) @db.Uuid
+  type             JobType
+  status           JobStatus @default(PENDING)
+  deduplicationKey String    @unique @db.VarChar(255)
+  payload          Json
+  runAt            DateTime  @db.Timestamptz(6)
+  lockedAt         DateTime? @db.Timestamptz(6)
+  lockedBy         String?   @db.VarChar(120)
+  leaseExpiresAt   DateTime? @db.Timestamptz(6)
+  attempts         Int       @default(0)
+  maxAttempts      Int       @default(10)
+  lastError        String?   @db.Text
+  completedAt      DateTime? @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([status, runAt])
+  @@index([type, status])
+  @@index([leaseExpiresAt])
+}

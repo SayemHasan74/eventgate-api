@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: eventgate-postgres
+    environment:
+      POSTGRES_USER: eventgate
+      POSTGRES_PASSWORD: eventgate
+      POSTGRES_DB: eventgate
+    ports:
+      - '5432:5432'
+    volumes:
+      - eventgate_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U eventgate -d eventgate']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: eventgate-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - eventgate_redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  eventgate_postgres_data:
+  eventgate_redis_data:
