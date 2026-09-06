@@ -59,6 +59,7 @@ npm run db:seed      # Seed configured development users and demo data
 - [Public event discovery and cache](docs/public-discovery.md)
 - [Orders and inventory reservations](docs/orders.md)
 - [Durable maintenance jobs](docs/maintenance.md)
+- [SSLCommerz checkout initiation](docs/payments.md)
 - [Business rules](docs/business-rules.md)
 - [Database and seed setup](docs/database.md)
 - [Entity relationship design](docs/erd.md)

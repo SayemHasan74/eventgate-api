@@ -8,6 +8,11 @@ export const userSummarySelect = {
   id: true,
   email: true,
   displayName: true,
+  phone: true,
+  address: true,
+  city: true,
+  postalCode: true,
+  country: true,
   role: true,
   status: true,
   createdAt: true,
@@ -65,7 +70,9 @@ export const getProfile = async (userId: string) => {
 export const updateProfile = async (userId: string, input: ProfileInput) =>
   getPrisma().user.update({
     where: { id: userId },
-    data: { displayName: input.displayName },
+    data: Object.fromEntries(
+      Object.entries(input).filter(([, value]) => value !== undefined),
+    ) as Prisma.UserUpdateInput,
     select: userSummarySelect,
   });
 
