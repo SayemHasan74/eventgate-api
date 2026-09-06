@@ -21,6 +21,7 @@
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
+    "jobs:run": "tsx src/jobs/maintenance.ts",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down"
   },

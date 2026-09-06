@@ -39,3 +39,18 @@ services:
         sync: false
       - key: SSLCOMMERZ_IPN_URL
         sync: false
+  - type: cron
+    name: eventgate-maintenance
+    runtime: node
+    schedule: '* * * * *'
+    buildCommand: npm ci && npm run db:generate && npm run build
+    startCommand: npm run jobs:run
+    envVars:
+      - key: NODE_VERSION
+        value: 24.12.0
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false

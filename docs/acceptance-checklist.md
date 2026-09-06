@@ -15,6 +15,7 @@ This checklist tracks planned evidence. Items are checked only after actual impl
 | Transactions, constraints, and indexes | Prisma migration and concurrency tests                                           | Planned in Parts 2, 11, 14-16, 18                                                 |
 | Redis caching                          | Public discovery cache with failure fallback                                     | Implemented; local Redis verification is pending because Docker is unavailable    |
 | Atomic orders and inventory            | Idempotent order API and 15-minute PostgreSQL reservations                       | Implemented; PostgreSQL concurrency verification needs `TEST_DATABASE_URL`        |
+| Durable maintenance                    | Leased PostgreSQL jobs, local command, and Render cron declaration               | Implemented; PostgreSQL and Render cron verification are pending                  |
 | Real payment flow                      | SSLCommerz session, callback validation, reconciliation evidence                 | Planned in Parts 13-16                                                            |
 | Security protection                    | Request IDs, redacted Pino logging, Helmet, CORS, rate limits                    | Implemented in Part 4; security verification expands with API modules             |
 | API documentation                      | Swagger and Postman collection                                                   | Planned in Part 19                                                                |
