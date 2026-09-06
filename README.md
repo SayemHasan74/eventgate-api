@@ -55,6 +55,7 @@ npm run db:seed      # Seed configured development users and demo data
 - [Permissions](docs/permissions.md)
 - [Access control and user administration](docs/access-control.md)
 - [Event lifecycle](docs/event-lifecycle.md)
+- [Ticket-tier rules](docs/ticket-tiers.md)
 - [Business rules](docs/business-rules.md)
 - [Database and seed setup](docs/database.md)
 - [Entity relationship design](docs/erd.md)
