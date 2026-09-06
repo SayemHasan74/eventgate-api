@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: eventgate-api
+    runtime: node
+    buildCommand: npm ci && npm run db:generate && npm run build
+    startCommand: npm run start
+    healthCheckPath: /api/v1/health/ready
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: 24.12.0
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: SSLCOMMERZ_STORE_ID
+        sync: false
+      - key: SSLCOMMERZ_STORE_PASSWORD
+        sync: false
+      - key: SSLCOMMERZ_IS_LIVE
+        sync: false
+      - key: SSLCOMMERZ_SUCCESS_URL
+        sync: false
+      - key: SSLCOMMERZ_FAIL_URL
+        sync: false
+      - key: SSLCOMMERZ_CANCEL_URL
+        sync: false
+      - key: SSLCOMMERZ_IPN_URL
+        sync: false

@@ -4,7 +4,7 @@ EventGate is a backend-only event ticketing and QR check-in platform. Organizers
 
 ## Current status
 
-Parts 1-2 are complete: strict TypeScript setup, starter Express API, requirements documentation, Prisma schema, initial migration, idempotent seed routine, and Docker Compose infrastructure. Authentication, payments, and product APIs are implemented in later planned parts.
+Parts 1-3 are complete: strict TypeScript setup, a consistent HTTP API foundation, request IDs and redacted Pino logs, liveness/readiness endpoints, Prisma schema, initial migration, idempotent seed routine, Docker Compose infrastructure, CI, and Render deployment configuration. Authentication, payments, and product APIs are implemented in later planned parts.
 
 ## Architecture
 
@@ -31,7 +31,7 @@ cp .env.example .env
 npm run dev
 ```
 
-The starter API responds at `http://localhost:4000/`.
+The API responds at `http://localhost:4000/`. Operational endpoints are `GET /api/v1/health/live` and `GET /api/v1/health/ready`. The readiness endpoint requires a reachable PostgreSQL database.
 
 ## Commands
 
@@ -56,6 +56,7 @@ npm run db:seed      # Seed configured development users and demo data
 - [Business rules](docs/business-rules.md)
 - [Database and seed setup](docs/database.md)
 - [Entity relationship design](docs/erd.md)
+- [Deployment setup and current verification status](docs/deployment.md)
 - [Assignment acceptance checklist](docs/acceptance-checklist.md)
 
 ## Security note
