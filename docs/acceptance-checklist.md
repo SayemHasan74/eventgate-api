@@ -7,7 +7,7 @@ This checklist tracks planned evidence. Items are checked only after actual impl
 | Node.js, TypeScript, Express           | `package.json`, strict `tsconfig.json`, consistent HTTP API foundation           | Implemented locally; deployment verification remains pending                      |
 | PostgreSQL and Prisma                  | Complete schema, initial SQL migration, idempotent Argon2id seed, Docker Compose | Configured in Part 2; applying migration and seeding require a PostgreSQL runtime |
 | Three roles and RBAC                   | Permission matrix, middleware, authorization tests                               | Planned in Parts 5-7                                                              |
-| Password and Google authentication     | Password APIs, rotating session tests, Google token verification                 | Password authentication implemented in Part 5; Google planned in Part 6           |
+| Password and Google authentication     | Password APIs, rotating session tests, verified Google ID-token flow             | Implemented in Parts 5-6; real GCP smoke test awaits credentials                  |
 | 20+ meaningful APIs                    | OpenAPI and Postman collection                                                   | Planned through Parts 8-19                                                        |
 | Zod validation and standard responses  | Response helpers plus reusable Zod validation middleware                         | Implemented in Part 4; endpoint schemas are added with each API module            |
 | Search, filter, sort, pagination       | Public event discovery API                                                       | Planned in Part 10                                                                |

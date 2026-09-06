@@ -11,7 +11,7 @@ import {
   signAccessToken,
 } from './token.service.js';
 
-type PublicUser = {
+export type PublicUser = {
   id: string;
   email: string;
   displayName: string;
@@ -32,7 +32,10 @@ const toPublicUser = (user: PublicUser): PublicUser => ({
   role: user.role,
 });
 
-const tokenResult = async (user: PublicUser, refreshToken: string): Promise<AuthResult> => ({
+export const createAuthResult = async (
+  user: PublicUser,
+  refreshToken: string,
+): Promise<AuthResult> => ({
   user: toPublicUser(user),
   accessToken: await signAccessToken({ userId: user.id, role: user.role }),
   refreshToken,
@@ -118,7 +121,7 @@ export const register = async (input: RegisterInput): Promise<AuthResult> => {
       return createdUser;
     });
 
-    return tokenResult(user, session.token);
+    return createAuthResult(user, session.token);
   } catch (error) {
     if (isAppError(error)) {
       throw error;
@@ -165,6 +168,15 @@ export const login = async (input: LoginInput): Promise<AuthResult> => {
   }
 
   assertActiveUser(user);
+  return createSessionForUser(user, 'AUTH_LOGGED_IN', { method: 'password' });
+};
+
+export const createSessionForUser = async (
+  user: PublicUser,
+  action: string,
+  metadata: Record<string, string>,
+): Promise<AuthResult> => {
+  const database = getPrisma();
   const session = createRefreshToken();
   const sessionId = createSessionId();
 
@@ -181,15 +193,15 @@ export const login = async (input: LoginInput): Promise<AuthResult> => {
     await transaction.auditLog.create({
       data: {
         actorId: user.id,
-        action: 'AUTH_LOGGED_IN',
+        action,
         entityType: 'REFRESH_SESSION',
         entityId: sessionId,
-        metadata: { method: 'password' },
+        metadata,
       },
     });
   });
 
-  return tokenResult(user, session.token);
+  return createAuthResult(user, session.token);
 };
 
 export const refresh = async (refreshToken: string): Promise<AuthResult> => {
@@ -302,7 +314,7 @@ export const refresh = async (refreshToken: string): Promise<AuthResult> => {
     return currentSession.user;
   });
 
-  return tokenResult(user, replacement.token);
+  return createAuthResult(user, replacement.token);
 };
 
 export const logout = async (refreshToken: string): Promise<void> => {

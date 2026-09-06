@@ -31,3 +31,5 @@ Protected endpoints re-check current user role/status. Suspended or deleted acco
 ## Password authentication
 
 Public password registration creates only active `ATTENDEE` accounts. Passwords use Argon2id hashes. Access tokens expire after 15 minutes. Refresh tokens are opaque random 256-bit values with a seven-day lifetime; their SHA-256 hashes are stored in `RefreshSession` records. A refresh atomically revokes its old session and creates its replacement. Reuse of a rotated token revokes the whole session family.
+
+Google ID tokens are verified for signature, issuer, audience, expiry, and verified email. The stable Google `sub` value is stored as the identity key. A verified Google email never silently links to an existing password account; the account owner must authenticate first and explicitly link the Google identity.

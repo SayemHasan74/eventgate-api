@@ -26,5 +26,11 @@ export const refreshSchema = z
 
 export const logoutSchema = refreshSchema;
 
+export const googleIdTokenSchema = z
+  .object({
+    idToken: z.string().min(20).max(10_000),
+  })
+  .strict();
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
