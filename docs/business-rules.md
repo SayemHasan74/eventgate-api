@@ -27,3 +27,7 @@ Refunds apply to the entire order only. An attendee can request one only for a p
 ## Security and data retention
 
 Protected endpoints re-check current user role/status. Suspended or deleted accounts cannot use prior access tokens. Users, eligible unused tiers, and eligible draft events are soft deleted; financial and audit records are retained. Secret values and QR credentials are never logged.
+
+## Password authentication
+
+Public password registration creates only active `ATTENDEE` accounts. Passwords use Argon2id hashes. Access tokens expire after 15 minutes. Refresh tokens are opaque random 256-bit values with a seven-day lifetime; their SHA-256 hashes are stored in `RefreshSession` records. A refresh atomically revokes its old session and creates its replacement. Reuse of a rotated token revokes the whole session family.

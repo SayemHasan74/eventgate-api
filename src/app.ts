@@ -8,6 +8,7 @@ import { logger } from './lib/logger.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { notFound } from './middleware/not-found.js';
 import { requestId } from './middleware/request-id.js';
+import { authRouter } from './modules/auth/auth.router.js';
 import { healthRouter } from './modules/health/health.router.js';
 import { sendSuccess } from './shared/responses/api-response.js';
 import { corsOptions } from './shared/security/cors.js';
@@ -41,6 +42,7 @@ app.get('/', (_request, response) => {
 });
 
 app.use('/api/v1/health', healthRouter);
+app.use('/api/v1/auth', authRouter);
 app.use(notFound);
 app.use(errorHandler);
 
