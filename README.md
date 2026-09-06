@@ -53,6 +53,7 @@ npm run db:seed      # Seed configured development users and demo data
 
 - [Requirements](docs/requirements.md)
 - [Permissions](docs/permissions.md)
+- [Access control and user administration](docs/access-control.md)
 - [Business rules](docs/business-rules.md)
 - [Database and seed setup](docs/database.md)
 - [Entity relationship design](docs/erd.md)
