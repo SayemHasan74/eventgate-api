@@ -8,6 +8,22 @@ export const errorHandler: ErrorRequestHandler = (error, request, response, next
   void next;
   const requestLogger = request.log ?? logger;
 
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'type' in error &&
+    error.type === 'entity.too.large'
+  ) {
+    requestLogger.warn(
+      { err: error, requestId: request.requestId },
+      'Request body exceeded its limit',
+    );
+    sendError(response, 413, 'Request body is too large', [
+      { code: 'PAYLOAD_TOO_LARGE', message: 'Request body exceeds the allowed size.' },
+    ]);
+    return;
+  }
+
   if (isAppError(error)) {
     requestLogger.warn(
       { err: error, requestId: request.requestId, code: error.code },

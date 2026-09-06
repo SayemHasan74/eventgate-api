@@ -56,6 +56,7 @@ npm run db:seed      # Seed configured development users and demo data
 - [Business rules](docs/business-rules.md)
 - [Database and seed setup](docs/database.md)
 - [Entity relationship design](docs/erd.md)
+- [HTTP security and validation](docs/security.md)
 - [Deployment setup and current verification status](docs/deployment.md)
 - [Assignment acceptance checklist](docs/acceptance-checklist.md)
 

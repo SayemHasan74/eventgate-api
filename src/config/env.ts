@@ -6,7 +6,26 @@ const environmentSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65_535).default(4000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
-  CORS_ORIGINS: z.string().default('http://localhost:3000'),
+  CORS_ORIGINS: z
+    .string()
+    .min(1)
+    .refine(
+      (value) =>
+        value.split(',').every((origin) => {
+          try {
+            const normalizedOrigin = origin.trim();
+            const url = new URL(normalizedOrigin);
+            return ['http:', 'https:'].includes(url.protocol) && url.origin === normalizedOrigin;
+          } catch {
+            return false;
+          }
+        }),
+      'must be a comma-separated list of HTTP(S) origins',
+    )
+    .default('http://localhost:3000'),
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
+  API_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(10_000).default(100),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(100).default(10),
   DATABASE_URL: z.string().url().optional(),
   REDIS_URL: z.string().url().optional(),
   JWT_ACCESS_SECRET: z.string().min(32).optional(),
