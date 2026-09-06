@@ -9,6 +9,7 @@ import {
 import { getPrisma } from '../lib/prisma.js';
 import { logger } from '../lib/logger.js';
 import { invalidatePublicDiscoveryCache } from '../modules/public-events/public-events.cache.js';
+import { reconcilePaymentAttempt } from '../modules/payments/payments.service.js';
 
 const leaseSeconds = 60;
 const cancellationBatchSize = 100;
@@ -188,6 +189,8 @@ const processJob = async (job: Job): Promise<void> => {
       await completeEvent(jobPayloadId(job, 'eventId'));
       return;
     case JobType.RECONCILE_PAYMENT:
+      await reconcilePaymentAttempt(jobPayloadId(job, 'paymentAttemptId'));
+      return;
     case JobType.RECONCILE_REFUND:
       await reconcileLater(job);
   }

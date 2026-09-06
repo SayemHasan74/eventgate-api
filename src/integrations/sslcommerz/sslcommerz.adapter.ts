@@ -3,6 +3,10 @@ import { AppError } from '../../shared/errors/app-error.js';
 
 const sandboxEndpoint = 'https://sandbox.sslcommerz.com/gwprocess/v4/api.php';
 const liveEndpoint = 'https://securepay.sslcommerz.com/gwprocess/v4/api.php';
+const sandboxValidationEndpoint =
+  'https://sandbox.sslcommerz.com/validator/api/validationserverAPI.php';
+const liveValidationEndpoint =
+  'https://securepay.sslcommerz.com/validator/api/validationserverAPI.php';
 
 type Fetcher = typeof fetch;
 
@@ -21,6 +25,15 @@ export type SslcommerzSessionRequest = {
 };
 
 export type SslcommerzSession = { sessionKey: string; gatewayUrl: string };
+
+export type SslcommerzValidation = {
+  validationId: string;
+  merchantTransactionId: string;
+  providerTransactionId: string;
+  amountPaisa: number;
+  currency: string;
+  status: string;
+};
 
 export class SslcommerzProviderError extends Error {
   public constructor(
@@ -136,5 +149,76 @@ export class SslcommerzAdapter {
       throw new SslcommerzProviderError(`SSLCommerz rejected the session: ${detail}`, 'FAILED');
     }
     return { sessionKey, gatewayUrl };
+  }
+
+  public async validateTransaction(validationId: string): Promise<SslcommerzValidation> {
+    assertSslcommerzConfigured();
+    const query = new URLSearchParams({
+      val_id: validationId,
+      store_id: env.SSLCOMMERZ_STORE_ID!,
+      store_passwd: env.SSLCOMMERZ_STORE_PASSWORD!,
+      v: '1',
+      format: 'json',
+    });
+    let response: Response;
+    try {
+      response = await this.fetcher(
+        `${env.SSLCOMMERZ_IS_LIVE === 'true' ? liveValidationEndpoint : sandboxValidationEndpoint}?${query.toString()}`,
+      );
+    } catch (cause) {
+      throw new SslcommerzProviderError(
+        'SSLCommerz validation outcome is unknown.',
+        'UNKNOWN',
+        cause,
+      );
+    }
+    if (!response.ok)
+      throw new SslcommerzProviderError(
+        `SSLCommerz validation failed with HTTP ${response.status}.`,
+        'UNKNOWN',
+      );
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch (cause) {
+      throw new SslcommerzProviderError(
+        'SSLCommerz validation returned invalid JSON.',
+        'UNKNOWN',
+        cause,
+      );
+    }
+    if (!payload || typeof payload !== 'object')
+      throw new SslcommerzProviderError('SSLCommerz validation response is invalid.', 'UNKNOWN');
+    const result = payload as Record<string, unknown>;
+    const amount =
+      typeof result.amount === 'string' || typeof result.amount === 'number'
+        ? Number(result.amount)
+        : NaN;
+    const transactionId = typeof result.tran_id === 'string' ? result.tran_id : undefined;
+    const providerTransactionId =
+      typeof result.bank_tran_id === 'string' ? result.bank_tran_id : undefined;
+    const returnedValidationId = typeof result.val_id === 'string' ? result.val_id : undefined;
+    const currency = typeof result.currency === 'string' ? result.currency : undefined;
+    const status = typeof result.status === 'string' ? result.status : undefined;
+    if (
+      !transactionId ||
+      !providerTransactionId ||
+      !returnedValidationId ||
+      !currency ||
+      !status ||
+      !Number.isFinite(amount)
+    )
+      throw new SslcommerzProviderError(
+        'SSLCommerz validation response is missing required fields.',
+        'UNKNOWN',
+      );
+    return {
+      validationId: returnedValidationId,
+      merchantTransactionId: transactionId,
+      providerTransactionId,
+      amountPaisa: Math.round(amount * 100),
+      currency,
+      status,
+    };
   }
 }

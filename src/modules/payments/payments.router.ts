@@ -5,7 +5,7 @@ import { authenticate } from '../../middleware/authenticate.js';
 import { authorize } from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
 
-import { beginCheckout } from './payments.controller.js';
+import { beginCheckout, receiveSslcommerzCallback } from './payments.controller.js';
 import { paymentOrderIdParamsSchema } from './payments.schemas.js';
 
 const paymentsRouter = Router();
@@ -17,3 +17,11 @@ paymentsRouter.post(
 );
 
 export { paymentsRouter };
+
+const sslcommerzCallbacksRouter = Router();
+sslcommerzCallbacksRouter.post('/ipn', receiveSslcommerzCallback('IPN'));
+sslcommerzCallbacksRouter.post('/success', receiveSslcommerzCallback('SUCCESS'));
+sslcommerzCallbacksRouter.post('/fail', receiveSslcommerzCallback('FAIL'));
+sslcommerzCallbacksRouter.post('/cancel', receiveSslcommerzCallback('CANCEL'));
+
+export { sslcommerzCallbacksRouter };

@@ -69,4 +69,31 @@ describe('SSLCommerz session adapter', () => {
     const adapter = new SslcommerzAdapter(vi.fn().mockRejectedValue(new Error('network offline')));
     await expect(adapter.createSession(request)).rejects.toMatchObject({ outcome: 'UNKNOWN' });
   });
+
+  it('uses the validation endpoint and normalizes a verified payment', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: 'VALID',
+          val_id: 'validation-1',
+          tran_id: 'eg_transaction_123',
+          bank_tran_id: 'bank-transaction-1',
+          amount: '123.45',
+          currency: 'BDT',
+        }),
+        { status: 200 },
+      ),
+    );
+    await expect(
+      new SslcommerzAdapter(fetcher).validateTransaction('validation-1'),
+    ).resolves.toEqual({
+      validationId: 'validation-1',
+      merchantTransactionId: 'eg_transaction_123',
+      providerTransactionId: 'bank-transaction-1',
+      amountPaisa: 12345,
+      currency: 'BDT',
+      status: 'VALID',
+    });
+    expect(fetcher.mock.calls[0]?.[0]).toContain('/validator/api/validationserverAPI.php?');
+  });
 });
