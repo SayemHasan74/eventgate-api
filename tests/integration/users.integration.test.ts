@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { cleanDatabase } from './database-cleanup.js';
+
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 
 if (!testDatabaseUrl) {
@@ -46,10 +48,7 @@ if (!testDatabaseUrl) {
     });
 
     beforeEach(async () => {
-      await database.auditLog.deleteMany();
-      await database.refreshSession.deleteMany();
-      await database.event.deleteMany();
-      await database.user.deleteMany();
+      await cleanDatabase(database);
     });
 
     afterAll(async () => {
