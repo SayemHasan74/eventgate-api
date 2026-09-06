@@ -3,6 +3,7 @@ import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
 
 import { findOwnedEvent } from '../events/events.service.js';
+import { invalidatePublicDiscoveryCache } from '../public-events/public-events.cache.js';
 import type { CreateTicketTierInput, UpdateTicketTierInput } from './ticket-tiers.schemas.js';
 
 type Actor = Express.Request['auth'];
@@ -67,7 +68,7 @@ export const createTicketTier = async (
   const event = await findOwnedEvent(eventId, actor);
   assertDraftEvent(event.status);
   assertSalesWindow(input.salesStartAt, input.salesEndAt, event.startAt, true);
-  return getPrisma().$transaction(async (tx) => {
+  const tier = await getPrisma().$transaction(async (tx) => {
     const tier = await tx.ticketTier.create({ data: { ...input, eventId: event.id } });
     await tx.auditLog.create({
       data: {
@@ -79,6 +80,8 @@ export const createTicketTier = async (
     });
     return tier;
   });
+  await invalidatePublicDiscoveryCache();
+  return tier;
 };
 
 export const updateTicketTier = async (
@@ -126,7 +129,7 @@ export const updateTicketTier = async (
   ) as Prisma.TicketTierUpdateInput;
   if (Object.keys(data).length === 0) return tier;
 
-  return database.$transaction(async (tx) => {
+  const updated = await database.$transaction(async (tx) => {
     const updated = await tx.ticketTier.update({ where: { id: tier.id }, data });
     await tx.auditLog.create({
       data: {
@@ -139,13 +142,15 @@ export const updateTicketTier = async (
     });
     return updated;
   });
+  await invalidatePublicDiscoveryCache();
+  return updated;
 };
 
 export const softDeleteTicketTier = async (actor: Actor, eventId: string, tierId: string) => {
   const event = await findOwnedEvent(eventId, actor);
   assertDraftEvent(event.status);
   const tier = await findOwnedTier(event.id, tierId);
-  return getPrisma().$transaction(async (tx) => {
+  await getPrisma().$transaction(async (tx) => {
     const orderCount = await tx.order.count({ where: { ticketTierId: tier.id } });
     if (orderCount > 0) {
       throw conflict(
@@ -164,4 +169,5 @@ export const softDeleteTicketTier = async (actor: Actor, eventId: string, tierId
       },
     });
   });
+  await invalidatePublicDiscoveryCache();
 };

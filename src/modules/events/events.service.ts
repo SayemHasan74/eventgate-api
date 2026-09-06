@@ -1,6 +1,7 @@
 import { EventStatus, type Prisma, UserRole } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
+import { invalidatePublicDiscoveryCache } from '../public-events/public-events.cache.js';
 
 import type { CreateEventInput, UpdateEventInput } from './events.schemas.js';
 
@@ -48,7 +49,7 @@ export const listManagedEvents = (actor: Actor) =>
 
 export const createEvent = async (actorId: string, input: CreateEventInput) => {
   if (input.startAt <= new Date()) throw invalidDate('Event must start in the future');
-  return getPrisma().$transaction(async (tx) => {
+  const event = await getPrisma().$transaction(async (tx) => {
     const event = await tx.event.create({
       data: { ...input, imageUrl: input.imageUrl ?? null, organizerId: actorId },
     });
@@ -57,6 +58,8 @@ export const createEvent = async (actorId: string, input: CreateEventInput) => {
     });
     return event;
   });
+  await invalidatePublicDiscoveryCache();
+  return event;
 };
 
 export const updateEvent = async (actor: Actor, eventId: string, input: UpdateEventInput) => {
@@ -87,7 +90,7 @@ export const updateEvent = async (actor: Actor, eventId: string, input: UpdateEv
   const data = Object.fromEntries(
     Object.entries(input).filter(([, value]) => value !== undefined),
   ) as Prisma.EventUpdateInput;
-  return getPrisma().$transaction(async (tx) => {
+  const updated = await getPrisma().$transaction(async (tx) => {
     const updated = await tx.event.update({ where: { id: event.id }, data });
     await tx.auditLog.create({
       data: {
@@ -100,6 +103,8 @@ export const updateEvent = async (actor: Actor, eventId: string, input: UpdateEv
     });
     return updated;
   });
+  await invalidatePublicDiscoveryCache();
+  return updated;
 };
 
 export const softDeleteEvent = async (actor: Actor, eventId: string) => {
@@ -111,7 +116,7 @@ export const softDeleteEvent = async (actor: Actor, eventId: string) => {
       'Cancel published events instead.',
     );
   }
-  return getPrisma().$transaction(async (tx) => {
+  await getPrisma().$transaction(async (tx) => {
     const orderCount = await tx.order.count({ where: { eventId: event.id } });
     if (orderCount > 0) {
       throw conflict(
@@ -125,6 +130,7 @@ export const softDeleteEvent = async (actor: Actor, eventId: string) => {
       data: { actorId: actor.id, action: 'EVENT_DELETED', entityType: 'EVENT', entityId: event.id },
     });
   });
+  await invalidatePublicDiscoveryCache();
 };
 
 export const publishEvent = async (actor: Actor, eventId: string) => {
@@ -136,7 +142,7 @@ export const publishEvent = async (actor: Actor, eventId: string) => {
       'Event must be a future draft.',
     );
   }
-  return getPrisma().$transaction(async (tx) => {
+  const updated = await getPrisma().$transaction(async (tx) => {
     const activeTierCount = await tx.ticketTier.count({
       where: { eventId: event.id, deletedAt: null },
     });
@@ -161,6 +167,8 @@ export const publishEvent = async (actor: Actor, eventId: string) => {
     });
     return updated;
   });
+  await invalidatePublicDiscoveryCache();
+  return updated;
 };
 
 export const cancelEvent = async (actor: Actor, eventId: string) => {
@@ -175,7 +183,7 @@ export const cancelEvent = async (actor: Actor, eventId: string) => {
       'Only upcoming draft or published events can be cancelled.',
     );
   }
-  return getPrisma().$transaction(async (tx) => {
+  const updated = await getPrisma().$transaction(async (tx) => {
     const updated = await tx.event.update({
       where: { id: event.id },
       data: { status: EventStatus.CANCELLED, cancelledAt: new Date() },
@@ -200,4 +208,6 @@ export const cancelEvent = async (actor: Actor, eventId: string) => {
     });
     return updated;
   });
+  await invalidatePublicDiscoveryCache();
+  return updated;
 };
