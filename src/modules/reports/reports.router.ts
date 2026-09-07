@@ -11,6 +11,7 @@ import {
   readOperations,
   readPlatformStats,
 } from './reports.controller.js';
+import { auditLogQuerySchema } from './reports.schemas.js';
 const organizerReportsRouter = Router({ mergeParams: true });
 organizerReportsRouter.use(authenticate, authorize(UserRole.ORGANIZER, UserRole.ADMIN));
 organizerReportsRouter.get('/orders', validate({ params: eventIdParamsSchema }), readEventOrders);
@@ -23,5 +24,5 @@ const adminReportsRouter = Router();
 adminReportsRouter.use(authenticate, authorize(UserRole.ADMIN));
 adminReportsRouter.get('/statistics', readPlatformStats);
 adminReportsRouter.get('/operations', readOperations);
-adminReportsRouter.get('/audit-logs', readAuditLogs);
+adminReportsRouter.get('/audit-logs', validate({ query: auditLogQuerySchema }), readAuditLogs);
 export { adminReportsRouter, organizerReportsRouter };

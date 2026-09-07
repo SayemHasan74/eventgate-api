@@ -110,8 +110,17 @@ export const openapi = {
       post: {
         summary: 'Start SSLCommerz checkout (ATTENDEE)',
         security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'Idempotency-Key',
+            in: 'header',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
         responses: {
           '201': { description: 'Hosted checkout URL' },
+          '400': { description: 'Missing idempotency key' },
           '503': { description: 'Gateway not configured' },
         },
       },

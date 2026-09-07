@@ -1,6 +1,7 @@
 import { OrderStatus, UserRole } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
+import type { AuditLogQuery } from './reports.schemas.js';
 
 const eventAccess = async (actor: { id: string; role: UserRole }, eventId: string) => {
   const event = await getPrisma().event.findUnique({ where: { id: eventId } });
@@ -133,16 +134,28 @@ export const adminOperations = async () => {
   return { events, payments, refunds };
 };
 
-export const auditLogs = () =>
-  getPrisma().auditLog.findMany({
-    select: {
-      id: true,
-      action: true,
-      entityType: true,
-      entityId: true,
-      createdAt: true,
-      actor: { select: { id: true, displayName: true, email: true } },
-    },
-    orderBy: { createdAt: 'desc' },
-    take: 200,
-  });
+export const auditLogs = async (query: AuditLogQuery) => {
+  const where = {
+    ...(query.action ? { action: query.action } : {}),
+    ...(query.entityType ? { entityType: query.entityType } : {}),
+  };
+  const database = getPrisma();
+  const [logs, total] = await database.$transaction([
+    database.auditLog.findMany({
+      where,
+      select: {
+        id: true,
+        action: true,
+        entityType: true,
+        entityId: true,
+        createdAt: true,
+        actor: { select: { id: true, displayName: true, email: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+    }),
+    database.auditLog.count({ where }),
+  ]);
+  return { logs, total, page: query.page, limit: query.limit };
+};

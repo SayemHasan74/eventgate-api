@@ -183,11 +183,17 @@ const processCancellationBatch = async (eventId: string): Promise<void> => {
     });
     if (refund?.status === 'APPROVED') await startRefund(refund.id);
   }
-  const remaining = await getPrisma().order.count({
-    where: { eventId, status: OrderStatus.PENDING_PAYMENT, reservationReleasedAt: null },
-  });
-  if (remaining > 0)
-    throw new RescheduleJob(0, `Cancellation batch has ${remaining} pending orders remaining.`);
+  const [remainingPending, remainingPaid] = await Promise.all([
+    getPrisma().order.count({
+      where: { eventId, status: OrderStatus.PENDING_PAYMENT, reservationReleasedAt: null },
+    }),
+    getPrisma().order.count({ where: { eventId, status: OrderStatus.PAID } }),
+  ]);
+  if (remainingPending + remainingPaid > 0)
+    throw new RescheduleJob(
+      0,
+      `Cancellation batch has ${remainingPending} pending and ${remainingPaid} paid orders remaining.`,
+    );
 };
 
 const completeEvent = async (eventId: string): Promise<void> => {

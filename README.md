@@ -74,6 +74,7 @@ npm test             # Unit tests; integration tests require TEST_DATABASE_URL
 - [API documentation, Postman, and verification record](docs/api.md)
 - [Demo walkthrough script](docs/demo-walkthrough.md)
 - [Submission fields](docs/submission.md)
+- [Mother-document audit](docs/mother-document-audit.md)
 
 ## Security note
 
