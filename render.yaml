@@ -2,7 +2,7 @@ services:
   - type: web
     name: eventgate-api
     runtime: node
-    buildCommand: npm ci && npm run db:generate && npm run build
+    buildCommand: npm ci --include=dev && npm run db:generate && npm run build
     startCommand: npm run start
     healthCheckPath: /api/v1/health/ready
     autoDeployTrigger: commit
@@ -43,7 +43,7 @@ services:
     name: eventgate-maintenance
     runtime: node
     schedule: '* * * * *'
-    buildCommand: npm ci && npm run db:generate && npm run build
+    buildCommand: npm ci --include=dev && npm run db:generate && npm run build
     startCommand: npm run jobs:run
     envVars:
       - key: NODE_VERSION
