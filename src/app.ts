@@ -2,6 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
+import swaggerUi from 'swagger-ui-express';
 
 import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
@@ -21,6 +22,7 @@ import { adminReportsRouter, organizerReportsRouter } from './modules/reports/re
 import { sendSuccess } from './shared/responses/api-response.js';
 import { corsOptions } from './shared/security/cors.js';
 import { apiRateLimiter } from './shared/security/rate-limit.js';
+import { openapi } from './docs/openapi.js';
 
 const app = express();
 
@@ -48,6 +50,8 @@ app.get('/', (_request, response) => {
     version: 'v1',
   });
 });
+app.get('/openapi.json', (_request, response) => response.json(openapi));
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapi, { explorer: true }));
 
 app.use('/api/v1/health', healthRouter);
 app.use('/api/v1/auth', authRouter);
