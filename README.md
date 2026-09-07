@@ -4,7 +4,7 @@ EventGate is a backend-only event ticketing and QR check-in platform. Organizers
 
 ## Current status
 
-Parts 1-20 are implemented and the API is deployed at https://eventgate-api.onrender.com. The API includes authentication, event and ticket-tier management, inventory reservations, verified SSLCommerz payment/refund workflows, QR admission, maintenance jobs, reports, tests, API documentation, and submission materials. Google OAuth and real SSLCommerz sandbox verification remain pending provider credentials.
+Parts 1-20 are implemented and the API is deployed at https://eventgate-api.onrender.com. The API includes authentication, event and ticket-tier management, inventory reservations, verified SSLCommerz payment/refund workflows, QR admission, maintenance jobs, reports, tests, API documentation, and submission materials. Google OAuth is configured; a real Google ID-token smoke test and SSLCommerz sandbox payment remain to be demonstrated.
 
 ## Architecture
 

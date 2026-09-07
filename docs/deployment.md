@@ -4,7 +4,7 @@
 
 The EventGate web service is live at https://eventgate-api.onrender.com. It uses Neon PostgreSQL and Upstash Redis, and Render health checks return `200` from `GET /api/v1/health/ready`.
 
-The committed [`render.yaml`](../render.yaml) still describes both the web service and maintenance cron job. Render required billing information to create the cron job, so only the free web service was deployed manually. Google OAuth and SSLCommerz provider verification remain pending credentials.
+The committed [`render.yaml`](../render.yaml) still describes both the web service and maintenance cron job. Render required billing information to create the cron job, so only the free web service was deployed manually. Google OAuth is configured; SSLCommerz sandbox checkout still needs a real transaction verification.
 
 ## Render setup
 
@@ -22,4 +22,4 @@ Render documents `healthCheckPath` for web-service HTTP health checks and recomm
 
 ## Production follow-up
 
-The deployed web API, database readiness, and public discovery endpoint are verified. The Render cron job, Google OAuth, and SSLCommerz sandbox flow remain pending external credentials or billing configuration.
+The deployed web API, database readiness, public discovery endpoint, and Google client configuration are verified. The Render cron job remains undeployed because of the paid-plan requirement, and the SSLCommerz sandbox flow still needs a real transaction test.

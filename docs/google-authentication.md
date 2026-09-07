@@ -26,4 +26,4 @@ Google documents that `verifyIdToken` checks the signature, `aud`, `iss`, and `e
 
 ## Verification status
 
-Unit tests use isolated fake Google clients to cover rejected audience, expired-token, and unverified-email cases. The account-collision integration test requires `TEST_DATABASE_URL`, as described in [password authentication](authentication.md). A real Google verification smoke test has **not** run because no GCP Web client ID or authorized test account has been provided.
+Unit tests use isolated fake Google clients to cover rejected audience, expired-token, and unverified-email cases. The account-collision integration test requires `TEST_DATABASE_URL`, as described in [password authentication](authentication.md). A Google Cloud Web client ID and an authorized test account are configured; a real Google ID-token verification smoke test remains to be run.
