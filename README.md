@@ -4,7 +4,7 @@ EventGate is a backend-only event ticketing and QR check-in platform. Organizers
 
 ## Current status
 
-Parts 1-19 are implemented. The API includes authentication, event and ticket-tier management, inventory reservations, verified SSLCommerz payment/refund workflows, QR admission, maintenance jobs, reports, tests, and API documentation. External deployment and real-provider verification remain pending credentials.
+Parts 1-20 are implemented. The API includes authentication, event and ticket-tier management, inventory reservations, verified SSLCommerz payment/refund workflows, QR admission, maintenance jobs, reports, tests, API documentation, and submission materials. External deployment and real-provider verification remain pending credentials.
 
 ## Architecture
 
@@ -47,6 +47,7 @@ npm run infra:up     # Start PostgreSQL and Redis with Docker Compose
 npm run db:generate  # Generate Prisma Client
 npm run db:migrate   # Apply Prisma migrations
 npm run db:seed      # Seed configured development users and demo data
+npm test             # Unit tests; integration tests require TEST_DATABASE_URL
 ```
 
 ## Documentation
@@ -71,6 +72,8 @@ npm run db:seed      # Seed configured development users and demo data
 - [Tickets and QR check-in](docs/tickets.md)
 - [Refunds and cancellation recovery](docs/refunds.md)
 - [API documentation, Postman, and verification record](docs/api.md)
+- [Demo walkthrough script](docs/demo-walkthrough.md)
+- [Submission fields](docs/submission.md)
 
 ## Security note
 
