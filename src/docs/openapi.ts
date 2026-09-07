@@ -314,28 +314,6 @@ export const openapi = {
         responses: { '200': { description: 'Order detail' }, '404': { description: 'Not found' } },
       },
     },
-    '/orders/{orderId}/checkout': {
-      post: {
-        tags: ['05 Orders and payment'],
-        summary: 'Start SSLCommerz checkout',
-        security: bearer,
-        parameters: [
-          pathUuid('orderId', demoOrderId),
-          {
-            name: 'Idempotency-Key',
-            in: 'header',
-            required: true,
-            schema: { type: 'string' },
-            example: 'video-checkout-001',
-          },
-        ],
-        responses: {
-          '201': { description: 'Hosted checkout URL' },
-          '400': { description: 'Missing idempotency key' },
-          '503': { description: 'Gateway not configured' },
-        },
-      },
-    },
     '/orders/{orderId}/cancel': {
       post: {
         tags: ['05 Orders and payment'],
