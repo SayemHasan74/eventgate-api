@@ -35,7 +35,15 @@ export const validate =
         continue;
       }
 
-      request[part] = result.data;
+      // Express 5 exposes `request.query` through a getter without a setter.
+      // Define the validated value explicitly so parsed defaults reach controllers
+      // without mutating the framework's read-only property directly.
+      Object.defineProperty(request, part, {
+        value: result.data,
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
     }
 
     if (errors.length > 0) {
