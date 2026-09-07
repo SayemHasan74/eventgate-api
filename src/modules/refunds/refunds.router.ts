@@ -16,13 +16,19 @@ import {
 } from './refunds.schemas.js';
 
 const attendeeRefundsRouter = Router();
-attendeeRefundsRouter.use(authenticate, authorize(UserRole.ATTENDEE));
 attendeeRefundsRouter.post(
   '/orders/:orderId/refund-requests',
+  authenticate,
+  authorize(UserRole.ATTENDEE),
   validate({ params: orderIdParamsSchema }),
   createRefundRequest,
 );
-attendeeRefundsRouter.get('/refund-requests', readRefunds);
+attendeeRefundsRouter.get(
+  '/refund-requests',
+  authenticate,
+  authorize(UserRole.ATTENDEE),
+  readRefunds,
+);
 const adminRefundsRouter = Router();
 adminRefundsRouter.use(authenticate, authorize(UserRole.ADMIN));
 adminRefundsRouter.get('/refunds', readRefunds);
