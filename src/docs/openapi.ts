@@ -93,6 +93,7 @@ export const openapi = {
         responses: {
           '200': { description: 'Access and refresh tokens issued' },
           '401': { description: 'Invalid credentials' },
+          '403': { description: 'Browser origin is not allowed by CORS' },
         },
       },
     },

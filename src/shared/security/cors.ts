@@ -4,7 +4,8 @@ import { env } from '../../config/env.js';
 import { AppError } from '../errors/app-error.js';
 
 const allowedOrigins = new Set(
-  env.CORS_ORIGINS.split(',')
+  `${env.CORS_ORIGINS},https://eventgate-api.onrender.com`
+    .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean),
 );
