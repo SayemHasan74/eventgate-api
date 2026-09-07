@@ -124,6 +124,16 @@ export const reviewRefund = async (adminId: string, refundId: string, input: Rev
           where: { id: found.id },
           data: { status: RefundStatus.REJECTED, reviewedById: adminId, reviewedAt: new Date() },
         });
+      const checkedIn = await tx.ticket.count({
+        where: { orderId: found.orderId, status: TicketStatus.CHECKED_IN },
+      });
+      if (checkedIn > 0)
+        throw err(
+          409,
+          'REFUND_NOT_ELIGIBLE',
+          'Order is not eligible for refund',
+          'A ticket was checked in before approval.',
+        );
       const approved = await tx.refund.update({
         where: { id: found.id },
         data: { status: RefundStatus.APPROVED, reviewedById: adminId, reviewedAt: new Date() },
