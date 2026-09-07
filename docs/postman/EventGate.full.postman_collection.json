@@ -1,0 +1,53 @@
+{
+  "info": {
+    "name": "EventGate API - Full Verification",
+    "description": "Core EventGate verification requests. Set baseUrl to the local or deployed API and paste locally issued access tokens into the variables.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://eventgate-api.onrender.com/api/v1" },
+    { "key": "accessToken", "value": "" },
+    { "key": "adminToken", "value": "" },
+    { "key": "organizerToken", "value": "" },
+    { "key": "eventSlug", "value": "eventgate-launch-demo" },
+    { "key": "eventId", "value": "" },
+    { "key": "ticketTierId", "value": "" },
+    { "key": "orderId", "value": "" },
+    { "key": "ticketId", "value": "" },
+    { "key": "refundId", "value": "" }
+  ],
+  "item": [
+    { "name": "Health and discovery", "item": [
+      { "name": "Live", "request": { "method": "GET", "url": "{{baseUrl}}/health/live" } },
+      { "name": "Ready", "request": { "method": "GET", "url": "{{baseUrl}}/health/ready" } },
+      { "name": "Public events", "request": { "method": "GET", "url": "{{baseUrl}}/events?page=1&limit=20" } },
+      { "name": "Event detail", "request": { "method": "GET", "url": "{{baseUrl}}/events/{{eventSlug}}" } }
+    ] },
+    { "name": "Authentication", "item": [
+      { "name": "Register attendee", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"email\": \"new-attendee@example.com\",\n  \"displayName\": \"New Attendee\",\n  \"password\": \"CorrectHorseBattery1\"\n}" }, "url": "{{baseUrl}}/auth/register" } },
+      { "name": "Password login", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"email\": \"attendee@eventgate.local\",\n  \"password\": \"<demo-password>\"\n}" }, "url": "{{baseUrl}}/auth/login" } },
+      { "name": "Google ID-token login", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"idToken\": \"<fresh-google-id-token>\"\n}" }, "url": "{{baseUrl}}/auth/google" } },
+      { "name": "Refresh session", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"<refresh-token>\"\n}" }, "url": "{{baseUrl}}/auth/refresh" } },
+      { "name": "Logout", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{accessToken}}" }], "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"<refresh-token>\"\n}" }, "url": "{{baseUrl}}/auth/logout" } }
+    ] },
+    { "name": "Attendee ticket flow", "item": [
+      { "name": "My profile", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }], "url": "{{baseUrl}}/users/me" } },
+      { "name": "Update profile", "request": { "method": "PATCH", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"phone\": \"+8801711111111\",\n  \"address\": \"Demo address, Dhaka\",\n  \"city\": \"Dhaka\",\n  \"postalCode\": \"1212\",\n  \"country\": \"Bangladesh\"\n}" }, "url": "{{baseUrl}}/users/me" } },
+      { "name": "Create order", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }, { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{$guid}}" }], "body": { "mode": "raw", "raw": "{\n  \"ticketTierId\": \"{{ticketTierId}}\",\n  \"quantity\": 1\n}" }, "url": "{{baseUrl}}/orders" } },
+      { "name": "List orders", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }], "url": "{{baseUrl}}/orders" } },
+      { "name": "Order detail", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }], "url": "{{baseUrl}}/orders/{{orderId}}" } },
+      { "name": "Start SSLCommerz checkout", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }, { "key": "Idempotency-Key", "value": "{{$guid}}" }], "url": "{{baseUrl}}/payments/orders/{{orderId}}/checkout" } },
+      { "name": "My tickets", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }], "url": "{{baseUrl}}/tickets" } },
+      { "name": "Ticket QR SVG", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }], "url": "{{baseUrl}}/tickets/{{ticketId}}/qr" } },
+      { "name": "Request refund", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }], "url": "{{baseUrl}}/orders/{{orderId}}/refund-requests" } }
+    ] },
+    { "name": "Organizer and admin", "item": [
+      { "name": "Organizer events", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{organizerToken}}" }], "url": "{{baseUrl}}/organizer/events" } },
+      { "name": "Organizer order report", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{organizerToken}}" }], "url": "{{baseUrl}}/organizer/events/{{eventId}}/reports/orders" } },
+      { "name": "Check in ticket", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{organizerToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"qrToken\": \"<ticket-qr-token>\"\n}" }, "url": "{{baseUrl}}/organizer/events/{{eventId}}/check-ins" } },
+      { "name": "Admin statistics", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }], "url": "{{baseUrl}}/admin/reports/statistics" } },
+      { "name": "Admin refunds", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }], "url": "{{baseUrl}}/admin/refunds" } },
+      { "name": "Review refund", "request": { "method": "PATCH", "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"decision\": \"approve\"\n}" }, "url": "{{baseUrl}}/admin/refunds/{{refundId}}" } }
+    ] }
+  ]
+}
