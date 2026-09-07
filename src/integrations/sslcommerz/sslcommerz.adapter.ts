@@ -7,6 +7,8 @@ const sandboxValidationEndpoint =
   'https://sandbox.sslcommerz.com/validator/api/validationserverAPI.php';
 const liveValidationEndpoint =
   'https://securepay.sslcommerz.com/validator/api/validationserverAPI.php';
+const refundEndpoint = (live: boolean) =>
+  `${live ? 'https://securepay.sslcommerz.com' : 'https://sandbox.sslcommerz.com'}/validator/api/merchantTransIDvalidationAPI.php`;
 
 type Fetcher = typeof fetch;
 
@@ -34,6 +36,12 @@ export type SslcommerzValidation = {
   currency: string;
   status: string;
 };
+
+export type SslcommerzRefundInitiation = {
+  providerRefundId: string;
+  status: 'PROCESSING' | 'FAILED';
+};
+export type SslcommerzRefundStatus = 'SUCCEEDED' | 'PROCESSING' | 'FAILED';
 
 export class SslcommerzProviderError extends Error {
   public constructor(
@@ -220,5 +228,85 @@ export class SslcommerzAdapter {
       currency,
       status,
     };
+  }
+
+  public async initiateRefund(input: {
+    bankTransactionId: string;
+    refundTransactionId: string;
+    amountPaisa: number;
+    remarks: string;
+  }): Promise<SslcommerzRefundInitiation> {
+    assertSslcommerzConfigured();
+    const query = new URLSearchParams({
+      bank_tran_id: input.bankTransactionId,
+      refund_trans_id: input.refundTransactionId,
+      refund_amount: (input.amountPaisa / 100).toFixed(2),
+      refund_remarks: input.remarks,
+      refe_id: input.refundTransactionId,
+      store_id: env.SSLCOMMERZ_STORE_ID!,
+      store_passwd: env.SSLCOMMERZ_STORE_PASSWORD!,
+      v: '1',
+      format: 'json',
+    });
+    let response: Response;
+    try {
+      response = await this.fetcher(
+        `${refundEndpoint(env.SSLCOMMERZ_IS_LIVE === 'true')}?${query}`,
+      );
+    } catch (cause) {
+      throw new SslcommerzProviderError(
+        'SSLCommerz refund initiation outcome is unknown.',
+        'UNKNOWN',
+        cause,
+      );
+    }
+    if (!response.ok)
+      throw new SslcommerzProviderError(
+        `SSLCommerz refund initiation failed with HTTP ${response.status}.`,
+        'UNKNOWN',
+      );
+    const result = (await response.json()) as Record<string, unknown>;
+    const reference = typeof result.refund_ref_id === 'string' ? result.refund_ref_id : undefined;
+    const status = typeof result.status === 'string' ? result.status.toLowerCase() : '';
+    if ((status === 'success' || status === 'processing') && reference)
+      return { providerRefundId: reference, status: 'PROCESSING' };
+    if (status === 'failed')
+      return { providerRefundId: reference ?? input.refundTransactionId, status: 'FAILED' };
+    throw new SslcommerzProviderError(
+      'SSLCommerz returned an invalid refund initiation response.',
+      'UNKNOWN',
+    );
+  }
+
+  public async getRefundStatus(providerRefundId: string): Promise<SslcommerzRefundStatus> {
+    assertSslcommerzConfigured();
+    const query = new URLSearchParams({
+      refund_ref_id: providerRefundId,
+      store_id: env.SSLCOMMERZ_STORE_ID!,
+      store_passwd: env.SSLCOMMERZ_STORE_PASSWORD!,
+      format: 'json',
+    });
+    let response: Response;
+    try {
+      response = await this.fetcher(
+        `${refundEndpoint(env.SSLCOMMERZ_IS_LIVE === 'true')}?${query}`,
+      );
+    } catch (cause) {
+      throw new SslcommerzProviderError('SSLCommerz refund status is unknown.', 'UNKNOWN', cause);
+    }
+    if (!response.ok)
+      throw new SslcommerzProviderError(
+        `SSLCommerz refund status failed with HTTP ${response.status}.`,
+        'UNKNOWN',
+      );
+    const result = (await response.json()) as Record<string, unknown>;
+    const status = typeof result.status === 'string' ? result.status.toLowerCase() : '';
+    if (status === 'refunded') return 'SUCCEEDED';
+    if (status === 'processing') return 'PROCESSING';
+    if (status === 'cancelled' || status === 'failed') return 'FAILED';
+    throw new SslcommerzProviderError(
+      'SSLCommerz returned an invalid refund status response.',
+      'UNKNOWN',
+    );
   }
 }

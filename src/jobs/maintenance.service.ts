@@ -10,6 +10,7 @@ import { getPrisma } from '../lib/prisma.js';
 import { logger } from '../lib/logger.js';
 import { invalidatePublicDiscoveryCache } from '../modules/public-events/public-events.cache.js';
 import { reconcilePaymentAttempt } from '../modules/payments/payments.service.js';
+import { reconcileRefund, startRefund } from '../modules/refunds/refunds.service.js';
 
 const leaseSeconds = 60;
 const cancellationBatchSize = 100;
@@ -150,6 +151,38 @@ const processCancellationBatch = async (eventId: string): Promise<void> => {
     orderBy: { createdAt: 'asc' },
   });
   for (const order of orders) await releasePendingOrder(order.id, OrderStatus.CANCELLED);
+  const paidOrders = await getPrisma().order.findMany({
+    where: { eventId, status: OrderStatus.PAID },
+    select: { id: true, totalAmountPaisaSnapshot: true },
+    take: cancellationBatchSize,
+  });
+  for (const order of paidOrders) {
+    const refund = await getPrisma().$transaction(async (tx) => {
+      const payment = await tx.paymentAttempt.findFirst({
+        where: { orderId: order.id, status: 'SUCCEEDED' },
+        orderBy: { completedAt: 'desc' },
+      });
+      if (!payment) return undefined;
+      const created = await tx.refund.upsert({
+        where: { orderId_reason: { orderId: order.id, reason: 'EVENT_CANCELLATION' } },
+        update: {},
+        create: {
+          orderId: order.id,
+          paymentAttemptId: payment.id,
+          reason: 'EVENT_CANCELLATION',
+          idempotencyKey: `event-cancellation:${order.id}`,
+          amountPaisa: order.totalAmountPaisaSnapshot,
+          status: 'APPROVED',
+        },
+      });
+      await tx.ticket.updateMany({
+        where: { orderId: order.id, status: 'ACTIVE' },
+        data: { status: 'VOIDED' },
+      });
+      return created;
+    });
+    if (refund?.status === 'APPROVED') await startRefund(refund.id);
+  }
   const remaining = await getPrisma().order.count({
     where: { eventId, status: OrderStatus.PENDING_PAYMENT, reservationReleasedAt: null },
   });
@@ -170,13 +203,6 @@ const completeEvent = async (eventId: string): Promise<void> => {
   }
 };
 
-const reconcileLater = async (job: Job): Promise<void> => {
-  throw new RescheduleJob(
-    5 * 60_000,
-    `${job.type} is waiting for the provider reconciliation adapter implemented in a later payment/refund part.`,
-  );
-};
-
 const processJob = async (job: Job): Promise<void> => {
   switch (job.type) {
     case JobType.EXPIRE_ORDER_RESERVATION:
@@ -192,7 +218,8 @@ const processJob = async (job: Job): Promise<void> => {
       await reconcilePaymentAttempt(jobPayloadId(job, 'paymentAttemptId'));
       return;
     case JobType.RECONCILE_REFUND:
-      await reconcileLater(job);
+      await reconcileRefund(jobPayloadId(job, 'refundId'));
+      return;
   }
 };
 
@@ -203,7 +230,7 @@ const enqueueOnce = async (
 ) => {
   await getPrisma().job.upsert({
     where: { deduplicationKey },
-    update: {},
+    update: { status: JobStatus.PENDING, runAt: new Date(), completedAt: null },
     create: { type, deduplicationKey, payload, runAt: new Date() },
   });
 };
@@ -231,7 +258,11 @@ export const scheduleMaintenanceJobs = async (): Promise<void> => {
       select: { id: true },
       take: 1_000,
     }),
-    database.refund.findMany({ where: { status: 'UNKNOWN' }, select: { id: true }, take: 1_000 }),
+    database.refund.findMany({
+      where: { status: { in: ['APPROVED', 'UNKNOWN', 'PROCESSING'] } },
+      select: { id: true },
+      take: 1_000,
+    }),
   ]);
   await Promise.all([
     ...expiredOrders.map((order) =>
