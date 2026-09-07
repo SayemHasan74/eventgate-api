@@ -2,16 +2,18 @@
 
 ## Current verification status
 
-The Render Blueprint is committed in [`render.yaml`](../render.yaml), but no Render account, PostgreSQL service, Redis service, custom domain, Google OAuth credentials, or SSLCommerz merchant credentials have been provided. A live deployment has therefore **not** been created or verified.
+The EventGate web service is live at https://eventgate-api.onrender.com. It uses Neon PostgreSQL and Upstash Redis, and Render health checks return `200` from `GET /api/v1/health/ready`.
+
+The committed [`render.yaml`](../render.yaml) still describes both the web service and maintenance cron job. Render required billing information to create the cron job, so only the free web service was deployed manually. Google OAuth and SSLCommerz provider verification remain pending credentials.
 
 ## Render setup
 
 1. Create a PostgreSQL database and Redis instance. Use private connection URLs where the services share a Render private network.
-2. In Render, create a Blueprint from this repository. It reads `render.yaml` and creates the EventGate web service.
-3. Set every environment variable marked `sync: false` in the service settings. Use strong generated values for `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET`; never commit them.
-4. Set `DATABASE_URL` to the PostgreSQL connection URL and `REDIS_URL` to the Redis URL.
-5. Before enabling public traffic, apply migrations from a trusted deployment environment with `npm run db:migrate` and create the demo accounts with the configured seed variables and `npm run db:seed`.
-6. Set `CORS_ORIGINS` to the actual allowed client origins. Do not use a wildcard for authenticated browser clients.
+2. Create a Render web service from this repository, or use the Blueprint when a paid cron job is acceptable.
+3. Set the service environment variables, including `DATABASE_URL`, `REDIS_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `NODE_ENV=production`, and a specific `CORS_ORIGINS` value.
+4. Use `npm ci --include=dev && npm run db:generate && npm run build` as the build command. The explicit `--include=dev` lets TypeScript build with `NODE_ENV=production`.
+5. Use `npm run start` as the start command and `/api/v1/health/ready` as the health-check path.
+6. Before enabling public traffic, apply migrations from a trusted deployment environment with `npm run db:migrate` and create the demo accounts with the configured seed variables and `npm run db:seed`.
 7. Update the SSLCommerz callback URLs and Google OAuth settings only after the Render URL is known.
 
 Render probes `GET /api/v1/health/ready`. That endpoint runs a database query and returns `503` if the database cannot be reached, so the web service should not be considered ready until its database configuration is valid. `GET /api/v1/health/live` only confirms that the HTTP process is running.
@@ -20,4 +22,4 @@ Render documents `healthCheckPath` for web-service HTTP health checks and recomm
 
 ## Production follow-up
 
-Part 12 adds the Render cron job for maintenance. Part 19 verifies the deployed API, migration run, cron execution, and any available SSLCommerz sandbox flow. Those steps remain pending until the required external accounts and credentials are available.
+The deployed web API, database readiness, and public discovery endpoint are verified. The Render cron job, Google OAuth, and SSLCommerz sandbox flow remain pending external credentials or billing configuration.
