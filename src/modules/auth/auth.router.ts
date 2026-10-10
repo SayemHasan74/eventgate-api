@@ -8,11 +8,14 @@ import {
   logoutController,
   googleLinkController,
   googleLoginController,
+  demoLoginController,
+  googleConfigController,
   refreshController,
   registerController,
 } from './auth.controller.js';
 import {
   googleIdTokenSchema,
+  demoLoginSchema,
   loginSchema,
   logoutSchema,
   refreshSchema,
@@ -24,6 +27,8 @@ const authRouter = Router();
 authRouter.use(authRateLimiter);
 authRouter.post('/register', validate({ body: registerSchema }), registerController);
 authRouter.post('/login', validate({ body: loginSchema }), loginController);
+authRouter.post('/demo', validate({ body: demoLoginSchema }), demoLoginController);
+authRouter.get('/google/config', googleConfigController);
 authRouter.post('/google', validate({ body: googleIdTokenSchema }), googleLoginController);
 authRouter.post(
   '/google/link',

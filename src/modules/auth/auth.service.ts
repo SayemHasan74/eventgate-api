@@ -1,9 +1,10 @@
 import argon2 from 'argon2';
 
 import { UserRole, UserStatus } from '../../generated/prisma/client.js';
+import { env } from '../../config/env.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError, isAppError } from '../../shared/errors/app-error.js';
-import type { LoginInput, RegisterInput } from './auth.schemas.js';
+import type { DemoLoginInput, LoginInput, RegisterInput } from './auth.schemas.js';
 import {
   createRefreshToken,
   createSessionId,
@@ -169,6 +170,40 @@ export const login = async (input: LoginInput): Promise<AuthResult> => {
 
   assertActiveUser(user);
   return createSessionForUser(user, 'AUTH_LOGGED_IN', { method: 'password' });
+};
+
+export const loginDemo = async ({ role }: DemoLoginInput): Promise<AuthResult> => {
+  if (env.DEMO_LOGIN_ENABLED !== 'true') {
+    throw new AppError({
+      statusCode: 404,
+      code: 'DEMO_LOGIN_DISABLED',
+      message: 'Demo login is not enabled',
+      errors: [{ code: 'DEMO_LOGIN_DISABLED', message: 'Demo login is unavailable.' }],
+    });
+  }
+
+  const emailByRole: Record<DemoLoginInput['role'], string | undefined> = {
+    ATTENDEE: env.SEED_ATTENDEE_EMAIL,
+    ORGANIZER: env.SEED_ORGANIZER_EMAIL,
+    ADMIN: env.SEED_ADMIN_EMAIL,
+  };
+  const email = emailByRole[role];
+  if (!email) {
+    throw new AppError({
+      statusCode: 503,
+      code: 'DEMO_LOGIN_NOT_CONFIGURED',
+      message: 'Demo login is not configured',
+      errors: [{ code: 'DEMO_LOGIN_NOT_CONFIGURED', message: 'A demo account is missing.' }],
+    });
+  }
+
+  const user = await getPrisma().user.findUnique({
+    where: { email },
+    select: { id: true, email: true, displayName: true, role: true, status: true, deletedAt: true },
+  });
+  if (!user) throw invalidCredentials();
+  assertActiveUser(user);
+  return createSessionForUser(user, 'AUTH_DEMO_LOGGED_IN', { method: 'demo', role });
 };
 
 export const createSessionForUser = async (
