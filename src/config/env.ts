@@ -31,6 +31,7 @@ const environmentSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(32).optional(),
   JWT_REFRESH_SECRET: z.string().min(32).optional(),
   GOOGLE_CLIENT_ID: z.string().min(1).optional(),
+  FRONTEND_URL: z.string().url().default('https://eventgate-frontend-lovat.vercel.app'),
   DEMO_LOGIN_ENABLED: z.enum(['true', 'false']).default('true'),
   SEED_ATTENDEE_EMAIL: z.string().email().optional(),
   SEED_ORGANIZER_EMAIL: z.string().email().optional(),
