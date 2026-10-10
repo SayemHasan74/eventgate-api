@@ -15,6 +15,7 @@ type Fetcher = typeof fetch;
 export type SslcommerzSessionRequest = {
   merchantTransactionId: string;
   amountPaisa: number;
+  productName: string;
   customer: {
     name: string;
     email: string;
@@ -100,7 +101,7 @@ export class SslcommerzAdapter {
       cus_country: input.customer.country,
       cus_phone: input.customer.phone,
       shipping_method: 'NO',
-      product_name: 'EventGate ticket order',
+      product_name: input.productName,
       product_category: 'event-ticket',
       product_profile: 'general',
       value_a: input.merchantTransactionId,

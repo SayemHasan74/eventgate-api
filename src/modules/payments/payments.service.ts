@@ -55,6 +55,7 @@ export const initiateCheckout = async (
     id: string;
     merchantTransactionId: string;
     amountPaisa: number;
+    productName: string;
     customer: SslcommerzCustomer;
   };
   try {
@@ -62,7 +63,7 @@ export const initiateCheckout = async (
       async (tx) => {
         const order = await tx.order.findFirst({
           where: { id: orderId, attendeeId },
-          include: { attendee: true },
+          include: { attendee: true, event: true },
         });
         if (!order) throw notFound();
         if (
@@ -130,6 +131,9 @@ export const initiateCheckout = async (
         });
         return {
           ...attempt,
+          // SSLCommerz displays this on its hosted checkout. Keep it concise so
+          // attendees can confirm they are paying for the right event and tier.
+          productName: `${order.event.title} — ${order.ticketTierNameSnapshot}`.slice(0, 255),
           customer: {
             name: customer.displayName,
             email: customer.email,
@@ -157,6 +161,7 @@ export const initiateCheckout = async (
     const session = await adapter.createSession({
       merchantTransactionId: pendingAttempt.merchantTransactionId,
       amountPaisa: pendingAttempt.amountPaisa,
+      productName: pendingAttempt.productName,
       customer: pendingAttempt.customer,
     });
     await getPrisma().paymentAttempt.update({
