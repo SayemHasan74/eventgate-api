@@ -36,7 +36,18 @@ app.use(
   }),
 );
 app.use(helmet());
-app.use(cors(corsOptions));
+// SSLCommerz sends browser redirects and server-to-server form posts from its own
+// domains. Those callbacks are authenticated by transaction validation in the
+// payment service, not by browser-origin trust, so they must not be blocked by
+// the public API's allow-list.
+app.use((request, response, next) => {
+  if (request.path.startsWith('/api/v1/payments/sslcommerz/')) {
+    next();
+    return;
+  }
+
+  cors(corsOptions)(request, response, next);
+});
 app.use(
   '/api/v1/payments/sslcommerz',
   express.urlencoded({ extended: false, limit: '16kb', parameterLimit: 50 }),
