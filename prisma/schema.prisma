@@ -211,29 +211,32 @@ model TicketTier {
 }
 
 model Order {
-  id                       String           @id @default(uuid()) @db.Uuid
-  attendeeId               String           @db.Uuid
-  eventId                  String           @db.Uuid
-  ticketTierId             String           @db.Uuid
-  eventNameSnapshot        String           @db.VarChar(180)
-  ticketTierNameSnapshot   String           @db.VarChar(100)
-  unitPricePaisaSnapshot   Int
-  quantity                 Int
-  totalAmountPaisaSnapshot Int
-  currency                 String           @default("BDT") @db.Char(3)
-  status                   OrderStatus      @default(PENDING_PAYMENT)
-  reservationExpiresAt     DateTime         @db.Timestamptz(6)
-  reservationReleasedAt    DateTime?        @db.Timestamptz(6)
-  paidAt                   DateTime?        @db.Timestamptz(6)
-  refundedAt               DateTime?        @db.Timestamptz(6)
-  createdAt                DateTime         @default(now()) @db.Timestamptz(6)
-  updatedAt                DateTime         @updatedAt @db.Timestamptz(6)
-  attendee                 User             @relation("OrderAttendee", fields: [attendeeId], references: [id], onDelete: Restrict)
-  event                    Event            @relation(fields: [eventId], references: [id], onDelete: Restrict)
-  ticketTier               TicketTier       @relation(fields: [ticketTierId], references: [id], onDelete: Restrict)
-  paymentAttempts          PaymentAttempt[]
-  tickets                  Ticket[]
-  refunds                  Refund[]
+  id                        String           @id @default(uuid()) @db.Uuid
+  attendeeId                String           @db.Uuid
+  eventId                   String           @db.Uuid
+  ticketTierId              String           @db.Uuid
+  eventNameSnapshot         String           @db.VarChar(180)
+  ticketTierNameSnapshot    String           @db.VarChar(100)
+  unitPricePaisaSnapshot    Int
+  quantity                  Int
+  totalAmountPaisaSnapshot  Int
+  currency                  String           @default("BDT") @db.Char(3)
+  status                    OrderStatus      @default(PENDING_PAYMENT)
+  reservationExpiresAt      DateTime         @db.Timestamptz(6)
+  reservationReleasedAt     DateTime?        @db.Timestamptz(6)
+  paidAt                    DateTime?        @db.Timestamptz(6)
+  refundedAt                DateTime?        @db.Timestamptz(6)
+  fulfilledPaymentAttemptId String?          @unique @db.Uuid
+  financialReviewRequired   Boolean          @default(false)
+  createdAt                 DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt                 DateTime         @updatedAt @db.Timestamptz(6)
+  attendee                  User             @relation("OrderAttendee", fields: [attendeeId], references: [id], onDelete: Restrict)
+  event                     Event            @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  ticketTier                TicketTier       @relation(fields: [ticketTierId], references: [id], onDelete: Restrict)
+  paymentAttempts           PaymentAttempt[] @relation("OrderPayments")
+  fulfilledPaymentAttempt   PaymentAttempt?  @relation("OrderFulfillment", fields: [fulfilledPaymentAttemptId], references: [id], onDelete: Restrict)
+  tickets                   Ticket[]
+  refunds                   Refund[]
 
   @@index([attendeeId, createdAt])
   @@index([eventId, status])
@@ -242,24 +245,30 @@ model Order {
 }
 
 model PaymentAttempt {
-  id                    String          @id @default(uuid()) @db.Uuid
-  orderId               String          @db.Uuid
+  id                    String           @id @default(uuid()) @db.Uuid
+  orderId               String           @db.Uuid
   sequence              Int
-  provider              PaymentProvider @default(SSLCOMMERZ)
-  merchantTransactionId String          @unique @db.VarChar(100)
-  providerSessionKey    String?         @unique @db.VarChar(255)
-  providerTransactionId String?         @unique @db.VarChar(255)
-  providerValidationId  String?         @unique @db.VarChar(255)
+  provider              PaymentProvider  @default(SSLCOMMERZ)
+  merchantTransactionId String           @unique @db.VarChar(100)
+  providerSessionKey    String?          @unique @db.VarChar(255)
+  providerTransactionId String?          @unique @db.VarChar(255)
+  providerValidationId  String?          @unique @db.VarChar(255)
   amountPaisa           Int
-  currency              String          @default("BDT") @db.Char(3)
-  status                PaymentStatus   @default(INITIATING)
-  initiatedAt           DateTime        @default(now()) @db.Timestamptz(6)
-  completedAt           DateTime?       @db.Timestamptz(6)
-  failureCode           String?         @db.VarChar(120)
-  failureMessage        String?         @db.Text
-  createdAt             DateTime        @default(now()) @db.Timestamptz(6)
-  updatedAt             DateTime        @updatedAt @db.Timestamptz(6)
-  order                 Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  currency              String           @default("BDT") @db.Char(3)
+  status                PaymentStatus    @default(INITIATING)
+  initiatedAt           DateTime         @default(now()) @db.Timestamptz(6)
+  completedAt           DateTime?        @db.Timestamptz(6)
+  failureCode           String?          @db.VarChar(120)
+  failureMessage        String?          @db.Text
+  checkoutUrl           String?          @db.Text
+  checkoutExpiresAt     DateTime?        @db.Timestamptz(6)
+  replayOfAttemptId     String?          @db.Uuid
+  createdAt             DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime         @updatedAt @db.Timestamptz(6)
+  order                 Order            @relation("OrderPayments", fields: [orderId], references: [id], onDelete: Restrict)
+  fulfilledOrder        Order?           @relation("OrderFulfillment")
+  replayOfAttempt       PaymentAttempt?  @relation("CaptureReplay", fields: [replayOfAttemptId], references: [id], onDelete: Restrict)
+  replayAttempts        PaymentAttempt[] @relation("CaptureReplay")
   events                PaymentEvent[]
   refunds               Refund[]
 
@@ -269,16 +278,17 @@ model PaymentAttempt {
 }
 
 model PaymentEvent {
-  id               String          @id @default(uuid()) @db.Uuid
-  paymentAttemptId String?         @db.Uuid
-  provider         PaymentProvider @default(SSLCOMMERZ)
-  providerEventKey String          @unique @db.VarChar(255)
-  eventType        String          @db.VarChar(80)
-  payload          Json
-  receivedAt       DateTime        @default(now()) @db.Timestamptz(6)
-  processedAt      DateTime?       @db.Timestamptz(6)
-  processingError  String?         @db.Text
-  paymentAttempt   PaymentAttempt? @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull)
+  id                       String          @id @default(uuid()) @db.Uuid
+  paymentAttemptId         String?         @db.Uuid
+  provider                 PaymentProvider @default(SSLCOMMERZ)
+  providerEventKey         String          @unique @db.VarChar(255)
+  eventType                String          @db.VarChar(80)
+  payload                  Json
+  receivedAt               DateTime        @default(now()) @db.Timestamptz(6)
+  processedAt              DateTime?       @db.Timestamptz(6)
+  processingError          String?         @db.Text
+  capturedPaymentAttemptId String?         @db.Uuid
+  paymentAttempt           PaymentAttempt? @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull)
 
   @@index([paymentAttemptId])
   @@index([processedAt])
@@ -309,33 +319,50 @@ model Ticket {
 }
 
 model Refund {
-  id               String          @id @default(uuid()) @db.Uuid
-  orderId          String          @db.Uuid
-  paymentAttemptId String?         @db.Uuid
-  requestedById    String?         @db.Uuid
-  reviewedById     String?         @db.Uuid
-  reason           RefundReason
-  idempotencyKey   String          @unique @db.VarChar(255)
-  providerRefundId String?         @unique @db.VarChar(255)
-  amountPaisa      Int
-  currency         String          @default("BDT") @db.Char(3)
-  status           RefundStatus    @default(REQUESTED)
-  requestedAt      DateTime        @default(now()) @db.Timestamptz(6)
-  reviewedAt       DateTime?       @db.Timestamptz(6)
-  processedAt      DateTime?       @db.Timestamptz(6)
-  completedAt      DateTime?       @db.Timestamptz(6)
-  failureCode      String?         @db.VarChar(120)
-  failureMessage   String?         @db.Text
-  createdAt        DateTime        @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime        @updatedAt @db.Timestamptz(6)
-  order            Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  paymentAttempt   PaymentAttempt? @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
-  requestedBy      User?           @relation("RefundRequester", fields: [requestedById], references: [id], onDelete: Restrict)
-  reviewedBy       User?           @relation("RefundReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
+  id                 String           @id @default(uuid()) @db.Uuid
+  orderId            String           @db.Uuid
+  paymentAttemptId   String?          @db.Uuid
+  requestedById      String?          @db.Uuid
+  reviewedById       String?          @db.Uuid
+  reason             RefundReason
+  idempotencyKey     String           @unique @db.VarChar(255)
+  providerRefundId   String?          @unique @db.VarChar(255)
+  amountPaisa        Int
+  currency           String           @default("BDT") @db.Char(3)
+  status             RefundStatus     @default(REQUESTED)
+  requestedAt        DateTime         @default(now()) @db.Timestamptz(6)
+  reviewedAt         DateTime?        @db.Timestamptz(6)
+  processedAt        DateTime?        @db.Timestamptz(6)
+  completedAt        DateTime?        @db.Timestamptz(6)
+  failureCode        String?          @db.VarChar(120)
+  failureMessage     String?          @db.Text
+  userMessage        String?          @db.VarChar(1000)
+  reviewerNote       String?          @db.VarChar(1000)
+  requestCount       Int              @default(1)
+  needsInvestigation Boolean          @default(false)
+  createdAt          DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime         @updatedAt @db.Timestamptz(6)
+  order              Order            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  paymentAttempt     PaymentAttempt?  @relation(fields: [paymentAttemptId], references: [id], onDelete: Restrict)
+  requestedBy        User?            @relation("RefundRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  reviewedBy         User?            @relation("RefundReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
+  activities         RefundActivity[]
 
-  @@unique([orderId, reason])
+  @@unique([paymentAttemptId, reason])
   @@index([orderId, status])
   @@index([status, requestedAt])
+}
+
+model RefundActivity {
+  id        String   @id @default(uuid()) @db.Uuid
+  refundId  String   @db.Uuid
+  actorId   String?  @db.Uuid
+  action    String   @db.VarChar(80)
+  note      String?  @db.VarChar(1000)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  refund    Refund   @relation(fields: [refundId], references: [id], onDelete: Restrict)
+
+  @@index([refundId, createdAt])
 }
 
 model AuditLog {

@@ -4,6 +4,8 @@ import { IdempotencyStatus, OrderStatus, Prisma } from '../../generated/prisma/c
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
 import { invalidatePublicDiscoveryCache } from '../public-events/public-events.cache.js';
+import { lockOrderGraph } from '../../lib/financial-locks.js';
+import { isSerializationConflict } from '../../lib/transaction.js';
 
 import type { CreateOrderInput, OrderListQuery } from './orders.schemas.js';
 
@@ -41,9 +43,7 @@ const conflict = (code: string, message: string, detail: string): AppError =>
 const requestHash = (input: CreateOrderInput): string =>
   createHash('sha256').update(JSON.stringify(input)).digest('hex');
 
-const isRetryableTransactionError = (error: unknown): boolean =>
-  error instanceof Prisma.PrismaClientKnownRequestError &&
-  (error.code === 'P2034' || error.code === 'P2002');
+const isRetryableTransactionError = (error: unknown): boolean => isSerializationConflict(error);
 
 const withSerializableRetry = async <T>(work: () => Promise<T>): Promise<T> => {
   let lastError: unknown;
@@ -102,6 +102,18 @@ export const createOrder = async (
           );
         }
 
+        const identity = await tx.ticketTier.findUnique({
+          where: { id: input.ticketTierId },
+          select: { eventId: true },
+        });
+        if (identity) {
+          await tx.$queryRaw(
+            Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${identity.eventId}::uuid FOR UPDATE`,
+          );
+          await tx.$queryRaw(
+            Prisma.sql`SELECT "id" FROM "TicketTier" WHERE "id" = ${input.ticketTierId}::uuid FOR UPDATE`,
+          );
+        }
         const tier = await tx.ticketTier.findFirst({
           where: { id: input.ticketTierId, deletedAt: null },
           include: { event: true },
@@ -177,7 +189,27 @@ export const createOrder = async (
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ),
-  );
+  ).catch(async (error: unknown) => {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002')
+      throw error;
+    const binding = await getPrisma().idempotencyRecord.findUnique({
+      where: { scope_key: { scope: createOrderScope(attendeeId), key: idempotencyKey } },
+    });
+    if (!binding) throw error;
+    if (binding.requestHash !== hash)
+      throw conflict(
+        'IDEMPOTENCY_KEY_REUSED',
+        'Idempotency key was reused for a different request',
+        'Use a new key for a different order request.',
+      );
+    if (binding.status === 'COMPLETED' && binding.resourceId)
+      return getOrderForAttendee(attendeeId, binding.resourceId);
+    throw conflict(
+      'IDEMPOTENCY_REQUEST_IN_PROGRESS',
+      'Order request is already being processed',
+      'Retry the same key shortly.',
+    );
+  });
   await invalidatePublicDiscoveryCache();
   return order;
 };
@@ -209,6 +241,7 @@ export const cancelOrder = async (attendeeId: string, orderId: string) => {
   await withSerializableRetry(() =>
     getPrisma().$transaction(
       async (tx) => {
+        await lockOrderGraph(tx, orderId);
         const order = await tx.order.findFirst({ where: { id: orderId, attendeeId } });
         if (!order) throw notFound();
         const releasedAt = new Date();

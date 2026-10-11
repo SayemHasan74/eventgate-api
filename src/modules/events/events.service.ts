@@ -1,4 +1,5 @@
-import { EventStatus, type Prisma, UserRole } from '../../generated/prisma/client.js';
+import { EventStatus, Prisma, UserRole } from '../../generated/prisma/client.js';
+import { serializableTransaction } from '../../lib/transaction.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
 import { invalidatePublicDiscoveryCache } from '../public-events/public-events.cache.js';
@@ -194,10 +195,27 @@ export const cancelEvent = async (actor: Actor, eventId: string) => {
       'Only upcoming draft or published events can be cancelled.',
     );
   }
-  const updated = await getPrisma().$transaction(async (tx) => {
+  const updated = await serializableTransaction(async (tx) => {
+    await tx.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`,
+    );
+    const current = await tx.event.findUniqueOrThrow({ where: { id: eventId } });
+    if (
+      (current.status !== EventStatus.DRAFT && current.status !== EventStatus.PUBLISHED) ||
+      current.startAt <= new Date()
+    )
+      throw conflict(
+        'INVALID_EVENT_TRANSITION',
+        'Event cannot be cancelled',
+        'Only upcoming draft or published events can be cancelled.',
+      );
     const updated = await tx.event.update({
       where: { id: event.id },
       data: { status: EventStatus.CANCELLED, cancelledAt: new Date() },
+    });
+    await tx.ticket.updateMany({
+      where: { eventId: event.id, status: { in: ['ACTIVE', 'CHECKED_IN'] } },
+      data: { status: 'VOIDED' },
     });
     await tx.job.upsert({
       where: { deduplicationKey: `event-cancellation:${event.id}` },

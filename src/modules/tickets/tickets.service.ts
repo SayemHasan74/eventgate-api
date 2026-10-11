@@ -1,7 +1,9 @@
 import { toDataURL } from 'qrcode';
 
-import { EventStatus, Prisma, TicketStatus, UserRole } from '../../generated/prisma/client.js';
+import { EventStatus, type Prisma, TicketStatus, UserRole } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
+import { serializableTransaction } from '../../lib/transaction.js';
+import { lockOrderGraph } from '../../lib/financial-locks.js';
 import { AppError } from '../../shared/errors/app-error.js';
 
 import type { PaginationQuery } from '../../shared/responses/pagination.js';
@@ -115,50 +117,56 @@ export const checkInTicket = async (
   eventId: string,
   input: CheckInInput,
 ) => {
-  const event = await assertEventCheckInAccess(actor, eventId);
-  assertCheckInWindow(event);
   const checkedInAt = new Date();
-  return getPrisma().$transaction(
-    async (tx) => {
-      const updated = await tx.ticket.updateMany({
-        where: {
-          eventId,
-          qrToken: input.qrToken,
-          status: TicketStatus.ACTIVE,
-          event: { status: EventStatus.PUBLISHED },
-        },
-        data: { status: TicketStatus.CHECKED_IN, checkedInAt, checkedInById: actor.id },
-      });
-      if (updated.count !== 1) {
-        const ticket = await tx.ticket.findFirst({
-          where: { eventId, qrToken: input.qrToken },
-          select: { status: true },
-        });
-        if (!ticket) throw notFound();
-        throw conflict(
-          'TICKET_NOT_CHECK_IN_ELIGIBLE',
-          'Ticket cannot be checked in',
-          `Ticket status is ${ticket.status}.`,
-        );
-      }
+  return serializableTransaction(async (tx) => {
+    const identity = await tx.ticket.findFirst({
+      where: { eventId, qrToken: input.qrToken },
+      select: { orderId: true },
+    });
+    if (!identity) throw notFound();
+    await lockOrderGraph(tx, identity.orderId);
+    const event = await tx.event.findUnique({ where: { id: eventId } });
+    if (!event) throw notFound();
+    if (actor.role !== UserRole.ADMIN && event.organizerId !== actor.id)
+      throw new AppError({ statusCode: 403, code: 'FORBIDDEN', message: 'Event access denied' });
+    assertCheckInWindow(event);
+    const updated = await tx.ticket.updateMany({
+      where: {
+        eventId,
+        qrToken: input.qrToken,
+        status: TicketStatus.ACTIVE,
+        event: { status: EventStatus.PUBLISHED },
+      },
+      data: { status: TicketStatus.CHECKED_IN, checkedInAt, checkedInById: actor.id },
+    });
+    if (updated.count !== 1) {
       const ticket = await tx.ticket.findFirst({
-        where: { eventId, qrToken: input.qrToken, status: TicketStatus.CHECKED_IN },
-        select: ticketSelect,
+        where: { eventId, qrToken: input.qrToken },
+        select: { status: true },
       });
-      if (!ticket) throw new Error('Checked-in ticket could not be read.');
-      await tx.auditLog.create({
-        data: {
-          actorId: actor.id,
-          action: 'TICKET_CHECKED_IN',
-          entityType: 'TICKET',
-          entityId: ticket.id,
-          metadata: { eventId },
-        },
-      });
-      return ticket;
-    },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-  );
+      if (!ticket) throw notFound();
+      throw conflict(
+        'TICKET_NOT_CHECK_IN_ELIGIBLE',
+        'Ticket cannot be checked in',
+        `Ticket status is ${ticket.status}.`,
+      );
+    }
+    const ticket = await tx.ticket.findFirst({
+      where: { eventId, qrToken: input.qrToken, status: TicketStatus.CHECKED_IN },
+      select: ticketSelect,
+    });
+    if (!ticket) throw new Error('Checked-in ticket could not be read.');
+    await tx.auditLog.create({
+      data: {
+        actorId: actor.id,
+        action: 'TICKET_CHECKED_IN',
+        entityType: 'TICKET',
+        entityId: ticket.id,
+        metadata: { eventId },
+      },
+    });
+    return ticket;
+  });
 };
 
 export const listCheckInHistory = async (

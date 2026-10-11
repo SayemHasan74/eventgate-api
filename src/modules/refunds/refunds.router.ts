@@ -13,6 +13,7 @@ import {
   orderIdParamsSchema,
   refundIdParamsSchema,
   reviewRefundSchema,
+  requestRefundSchema,
 } from './refunds.schemas.js';
 
 import { paginationQuerySchema } from '../../shared/responses/pagination.js';
@@ -22,7 +23,7 @@ attendeeRefundsRouter.post(
   '/orders/:orderId/refund-requests',
   authenticate,
   authorize(UserRole.ATTENDEE),
-  validate({ params: orderIdParamsSchema }),
+  validate({ params: orderIdParamsSchema, body: requestRefundSchema }),
   createRefundRequest,
 );
 attendeeRefundsRouter.get(

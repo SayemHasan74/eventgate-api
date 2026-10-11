@@ -11,6 +11,9 @@ import { logger } from '../lib/logger.js';
 import { invalidatePublicDiscoveryCache } from '../modules/public-events/public-events.cache.js';
 import { reconcilePaymentAttempt } from '../modules/payments/payments.service.js';
 import { reconcileRefund, startRefund } from '../modules/refunds/refunds.service.js';
+import { ensureCaptureRefund } from '../modules/refunds/capture-refund.js';
+import { serializableTransaction } from '../lib/transaction.js';
+import { lockOrderGraph } from '../lib/financial-locks.js';
 
 const leaseSeconds = 60;
 const cancellationBatchSize = 100;
@@ -109,35 +112,33 @@ const retryOrFailJob = async (job: Job, workerId: string, error: unknown): Promi
 
 const releasePendingOrder = async (orderId: string, status: 'EXPIRED' | 'CANCELLED') => {
   let released = false;
-  await getPrisma().$transaction(
-    async (tx) => {
-      const order = await tx.order.findUnique({ where: { id: orderId } });
-      if (!order || order.status !== OrderStatus.PENDING_PAYMENT || order.reservationReleasedAt)
-        return;
-      const updated = await tx.order.updateMany({
-        where: { id: order.id, status: OrderStatus.PENDING_PAYMENT, reservationReleasedAt: null },
-        data: { status, reservationReleasedAt: new Date() },
-      });
-      if (updated.count !== 1) return;
-      const inventoryUpdated = await tx.$executeRaw(Prisma.sql`
+  await serializableTransaction(async (tx) => {
+    await lockOrderGraph(tx, orderId);
+    const order = await tx.order.findUnique({ where: { id: orderId } });
+    if (!order || order.status !== OrderStatus.PENDING_PAYMENT || order.reservationReleasedAt)
+      return;
+    const updated = await tx.order.updateMany({
+      where: { id: order.id, status: OrderStatus.PENDING_PAYMENT, reservationReleasedAt: null },
+      data: { status, reservationReleasedAt: new Date() },
+    });
+    if (updated.count !== 1) return;
+    const inventoryUpdated = await tx.$executeRaw(Prisma.sql`
         UPDATE "TicketTier"
         SET "reservedQuantity" = "reservedQuantity" - ${order.quantity}
         WHERE "id" = ${order.ticketTierId}
           AND "reservedQuantity" >= ${order.quantity}
       `);
-      if (inventoryUpdated !== 1)
-        throw new Error(`Could not release inventory for order ${order.id}.`);
-      await tx.auditLog.create({
-        data: {
-          action: status === OrderStatus.EXPIRED ? 'ORDER_EXPIRED' : 'ORDER_CANCELLED_FOR_EVENT',
-          entityType: 'ORDER',
-          entityId: order.id,
-        },
-      });
-      released = true;
-    },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-  );
+    if (inventoryUpdated !== 1)
+      throw new Error(`Could not release inventory for order ${order.id}.`);
+    await tx.auditLog.create({
+      data: {
+        action: status === OrderStatus.EXPIRED ? 'ORDER_EXPIRED' : 'ORDER_CANCELLED_FOR_EVENT',
+        entityType: 'ORDER',
+        entityId: order.id,
+      },
+    });
+    released = true;
+  });
   if (released) await invalidatePublicDiscoveryCache();
 };
 
@@ -151,48 +152,58 @@ const processCancellationBatch = async (eventId: string): Promise<void> => {
     orderBy: { createdAt: 'asc' },
   });
   for (const order of orders) await releasePendingOrder(order.id, OrderStatus.CANCELLED);
-  const paidOrders = await getPrisma().order.findMany({
-    where: { eventId, status: OrderStatus.PAID },
-    select: { id: true, totalAmountPaisaSnapshot: true },
-    take: cancellationBatchSize,
-  });
+  // Dispatch by canonical capture, excluding already-dispatched work rather
+  // than waiting for the first 100 paid orders to settle financially.
+  const pendingCaptures = () =>
+    getPrisma().$queryRaw<{ id: string }[]>(Prisma.sql`
+    SELECT o."id" FROM "Order" o
+    WHERE o."eventId" = ${eventId}::uuid AND o."status" = 'PAID'
+      AND o."fulfilledPaymentAttemptId" IS NOT NULL AND NOT o."financialReviewRequired"
+      AND NOT EXISTS (SELECT 1 FROM "Refund" r
+        WHERE r."paymentAttemptId" = o."fulfilledPaymentAttemptId"
+          AND r."status" IN ('APPROVED','PROCESSING','UNKNOWN','SUCCEEDED','FAILED'))
+    ORDER BY o."id" LIMIT ${cancellationBatchSize}
+  `);
+  const paidOrders = await pendingCaptures();
   for (const order of paidOrders) {
-    const refund = await getPrisma().$transaction(async (tx) => {
-      const payment = await tx.paymentAttempt.findFirst({
-        where: { orderId: order.id, status: 'SUCCEEDED' },
-        orderBy: { completedAt: 'desc' },
+    const refund = await serializableTransaction(async (tx) => {
+      await lockOrderGraph(tx, order.id);
+      const current = await tx.order.findUniqueOrThrow({
+        where: { id: order.id },
+        include: { event: true },
       });
-      if (!payment) return undefined;
-      const created = await tx.refund.upsert({
-        where: { orderId_reason: { orderId: order.id, reason: 'EVENT_CANCELLATION' } },
-        update: {},
-        create: {
-          orderId: order.id,
-          paymentAttemptId: payment.id,
-          reason: 'EVENT_CANCELLATION',
-          idempotencyKey: `event-cancellation:${order.id}`,
-          amountPaisa: order.totalAmountPaisaSnapshot,
-          status: 'APPROVED',
-        },
-      });
-      await tx.ticket.updateMany({
-        where: { orderId: order.id, status: 'ACTIVE' },
-        data: { status: 'VOIDED' },
-      });
-      return created;
+      if (
+        current.event.status !== 'CANCELLED' ||
+        current.status !== 'PAID' ||
+        !current.fulfilledPaymentAttemptId
+      )
+        return null;
+      return ensureCaptureRefund(
+        tx,
+        current.id,
+        current.fulfilledPaymentAttemptId,
+        'EVENT_CANCELLATION',
+        current.totalAmountPaisaSnapshot,
+      );
     });
     if (refund?.status === 'APPROVED') await startRefund(refund.id);
   }
-  const [remainingPending, remainingPaid] = await Promise.all([
-    getPrisma().order.count({
-      where: { eventId, status: OrderStatus.PENDING_PAYMENT, reservationReleasedAt: null },
-    }),
-    getPrisma().order.count({ where: { eventId, status: OrderStatus.PAID } }),
-  ]);
-  if (remainingPending + remainingPaid > 0)
-    throw new RescheduleJob(
-      0,
-      `Cancellation batch has ${remainingPending} pending and ${remainingPaid} paid orders remaining.`,
+  const remainingPending = await getPrisma().order.count({
+    where: { eventId, status: OrderStatus.PENDING_PAYMENT, reservationReleasedAt: null },
+  });
+  if (remainingPending || (await pendingCaptures()).length)
+    throw new RescheduleJob(1000, 'Cancellation dispatch has another batch to process.');
+  if (
+    await getPrisma().order.count({
+      where: {
+        eventId,
+        status: 'PAID',
+        OR: [{ financialReviewRequired: true }, { fulfilledPaymentAttemptId: null }],
+      },
+    })
+  )
+    throw new Error(
+      'Cancellation includes historical purchases requiring financial investigation.',
     );
 };
 

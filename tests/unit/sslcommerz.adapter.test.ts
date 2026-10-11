@@ -38,6 +38,7 @@ describe('SSLCommerz session adapter', () => {
     'https://sandbox.sslcommerz.com/checkout?store_passwd=DO_NOT_EXPOSE',
     'https://sandbox.sslcommerz.com:444/checkout',
     'https://sandbox.sslcommerz.com/checkout#secret',
+    'https://securepay.sslcommerz.com/checkout',
   ])('rejects unsafe hosted addresses without disclosing them: %s', async (gatewayUrl) => {
     const adapter = new SslcommerzAdapter(
       vi.fn().mockResolvedValue(
@@ -118,5 +119,80 @@ describe('SSLCommerz session adapter', () => {
       status: 'VALID',
     });
     expect(fetcher.mock.calls[0]?.[0]).toContain('/validator/api/validationserverAPI.php?');
+  });
+});
+
+describe('SSLCommerz refund identity', () => {
+  const refund = {
+    bankTransactionId: 'capture-bank',
+    refundTransactionId: 'rf_deterministic',
+    amountPaisa: 12345,
+    remarks: 'ATTENDEE_REQUEST',
+  };
+  it('sends deterministic whole-capture identity and accepts the documented provider reference', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue(
+        Response.json({
+          APIConnect: 'DONE',
+          bank_tran_id: refund.bankTransactionId,
+          refund_ref_id: 'refund-ref',
+          status: 'success',
+        }),
+      );
+    expect(await new SslcommerzAdapter(fetcher).initiateRefund(refund)).toEqual({
+      providerRefundId: 'refund-ref',
+      status: 'PROCESSING',
+    });
+    const query = new URL(fetcher.mock.calls[0]![0] as string).searchParams;
+    expect(query.get('refund_trans_id')).toBe(refund.refundTransactionId);
+    expect(query.get('refund_amount')).toBe('123.45');
+    expect(query.get('bank_tran_id')).toBe(refund.bankTransactionId);
+  });
+  it.each([
+    {
+      APIConnect: 'DONE',
+      bank_tran_id: 'other-bank',
+      refund_ref_id: 'refund-ref',
+      status: 'refunded',
+    },
+    {
+      APIConnect: 'DONE',
+      bank_tran_id: 'capture-bank',
+      refund_ref_id: 'other-ref',
+      status: 'refunded',
+    },
+    {
+      APIConnect: 'FAILED',
+      bank_tran_id: 'capture-bank',
+      refund_ref_id: 'refund-ref',
+      status: 'refunded',
+    },
+  ])('does not settle unrelated or unauthenticated refund responses', async (response) => {
+    const adapter = new SslcommerzAdapter(vi.fn().mockResolvedValue(Response.json(response)));
+    await expect(adapter.getRefundStatus('refund-ref', 'capture-bank')).rejects.toMatchObject({
+      outcome: 'UNKNOWN',
+    });
+  });
+  it('accepts only a matching provider-confirmed terminal outcome', async () => {
+    const adapter = new SslcommerzAdapter(
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json({
+            APIConnect: 'DONE',
+            bank_tran_id: 'capture-bank',
+            refund_ref_id: 'refund-ref',
+            status: 'refunded',
+          }),
+        ),
+    );
+    expect(await adapter.getRefundStatus('refund-ref', 'capture-bank')).toBe('SUCCEEDED');
+  });
+  it('does not invent a refund reference when the provider definitively rejects initiation', async () => {
+    const adapter = new SslcommerzAdapter(
+      vi.fn().mockResolvedValue(Response.json({ APIConnect: 'DONE', status: 'failed' })),
+    );
+    await expect(adapter.initiateRefund(refund)).rejects.toMatchObject({ outcome: 'FAILED' });
   });
 });

@@ -343,7 +343,15 @@ export const openapi = {
           },
         ],
         responses: {
-          '201': { description: 'Checkout session' },
+          '200': {
+            description:
+              'AVAILABLE: persisted safe checkout URL and expiry; same key replays without another provider call',
+          },
+          '202': {
+            description:
+              'PROCESSING: paymentAttemptId, paymentStatus and owner-only statusPath; do not create another payment while uncertain',
+          },
+          '409': { description: 'Different payload reused the key, or the order is not payable' },
           '503': { description: 'Gateway unavailable' },
         },
       },
@@ -447,6 +455,7 @@ export const openapi = {
         summary: 'Request whole-order refund',
         security: bearer,
         parameters: [pathUuid('orderId', demoOrderId)],
+        requestBody: jsonBody({ userMessage: 'My plans changed.' }),
         responses: {
           '201': { description: 'Refund requested' },
           '409': { description: 'Ineligible or already requested' },
@@ -478,7 +487,10 @@ export const openapi = {
         summary: 'Approve or reject refund',
         security: bearer,
         parameters: [pathUuid('refundId', demoRefundId)],
-        requestBody: jsonBody({ decision: 'approve' }),
+        requestBody: jsonBody({
+          decision: 'approve',
+          reviewerNote: 'Eligible unused passes. A note is required when rejecting.',
+        }),
         responses: {
           '200': { description: 'Reviewed' },
           '409': { description: 'Refund is not reviewable' },
@@ -488,10 +500,14 @@ export const openapi = {
     '/admin/refunds/{refundId}/retry': {
       post: {
         tags: ['07 Refunds'],
-        summary: 'Retry provider refund',
+        summary:
+          'Initiate approved refund or retry a provider-confirmed failure; UNKNOWN is never blindly retried',
         security: bearer,
         parameters: [pathUuid('refundId', demoRefundId)],
-        responses: { '200': { description: 'Retry started' } },
+        responses: {
+          '202': { description: 'Initiation claimed' },
+          '409': { description: 'Uncertain capture requires investigation/reconciliation' },
+        },
       },
     },
     '/organizer/events/{eventId}/reports/orders': {

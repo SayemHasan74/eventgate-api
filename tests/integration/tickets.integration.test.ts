@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { randomBytes } from 'node:crypto';
 import { cleanDatabase } from './database-cleanup.js';
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -99,7 +100,7 @@ if (!testDatabaseUrl) {
         ticketTierId: tier.id,
         attendeeId: attendee.id,
         sequence: 1,
-        qrToken: crypto.randomBytes(32).toString('base64url'),
+        qrToken: randomBytes(32).toString('base64url'),
       },
     });
     return { organizer, attendee, other, event, ticket };

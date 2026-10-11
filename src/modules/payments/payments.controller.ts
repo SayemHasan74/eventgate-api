@@ -33,11 +33,19 @@ export const readPaymentAttempt: RequestHandler = async (request, response) => {
 };
 
 export const beginCheckout: RequestHandler = async (request, response) => {
+  const result = await initiateCheckout(
+    request.auth.id,
+    request.params.orderId as string,
+    request.get('Idempotency-Key')!,
+  );
+  response.setHeader('Cache-Control', 'private, no-store');
   sendSuccess(
     response,
-    201,
-    'SSLCommerz checkout session created',
-    await initiateCheckout(request.auth.id, request.params.orderId as string),
+    result.statusCode,
+    result.statusCode === 202
+      ? 'Payment status needs confirmation'
+      : 'SSLCommerz checkout available',
+    result.data,
   );
 };
 

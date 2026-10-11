@@ -4,8 +4,11 @@ export const cleanDatabase = async (database: PrismaClient): Promise<void> => {
   await database.auditLog.deleteMany();
   await database.idempotencyRecord.deleteMany();
   await database.ticket.deleteMany();
+  await database.refundActivity.deleteMany();
   await database.refund.deleteMany();
   await database.paymentEvent.deleteMany();
+  await database.order.updateMany({ data: { fulfilledPaymentAttemptId: null } });
+  await database.paymentAttempt.updateMany({ data: { replayOfAttemptId: null } });
   await database.paymentAttempt.deleteMany();
   await database.order.deleteMany();
   await database.ticketTier.deleteMany();

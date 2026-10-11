@@ -38,7 +38,10 @@ const trustedCheckoutUrl = (value: string): boolean => {
       !url.username &&
       !url.password &&
       !url.hash &&
-      ['sandbox.sslcommerz.com', 'securepay.sslcommerz.com'].includes(url.hostname) &&
+      url.hostname ===
+        (env.SSLCOMMERZ_IS_LIVE === 'true'
+          ? 'securepay.sslcommerz.com'
+          : 'sandbox.sslcommerz.com') &&
       ![...url.searchParams.keys()].some((key) =>
         /(passwd|password|secret|access[_-]?token|refresh[_-]?token|api[_-]?key|credential)/i.test(
           key,
@@ -127,8 +130,6 @@ export class SslcommerzAdapter {
       product_profile: 'general',
       value_a: input.merchantTransactionId,
     });
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15_000);
     let response: Response;
     try {
       response = await this.fetcher(
@@ -137,7 +138,7 @@ export class SslcommerzAdapter {
           method: 'POST',
           headers: { 'content-type': 'application/x-www-form-urlencoded' },
           body,
-          signal: controller.signal,
+          signal: AbortSignal.timeout(15_000),
         },
       );
     } catch (cause) {
@@ -146,8 +147,6 @@ export class SslcommerzAdapter {
         'UNKNOWN',
         cause,
       );
-    } finally {
-      clearTimeout(timeout);
     }
     if (!response.ok) {
       throw new SslcommerzProviderError(
@@ -172,11 +171,10 @@ export class SslcommerzAdapter {
     const gatewayUrl =
       typeof result.GatewayPageURL === 'string' ? result.GatewayPageURL : undefined;
     if (result.status !== 'SUCCESS' || !sessionKey || !gatewayUrl) {
-      const detail =
-        typeof result.failedreason === 'string'
-          ? result.failedreason
-          : 'Session creation was rejected.';
-      throw new SslcommerzProviderError(`SSLCommerz rejected the session: ${detail}`, 'FAILED');
+      throw new SslcommerzProviderError(
+        'SSLCommerz did not confirm session creation.',
+        result.status === 'FAILED' ? 'FAILED' : 'UNKNOWN',
+      );
     }
     if (!trustedCheckoutUrl(gatewayUrl)) {
       // A session may already exist at the provider. Never disclose the address or retry blindly.
@@ -201,6 +199,7 @@ export class SslcommerzAdapter {
     try {
       response = await this.fetcher(
         `${env.SSLCOMMERZ_IS_LIVE === 'true' ? liveValidationEndpoint : sandboxValidationEndpoint}?${query.toString()}`,
+        { signal: AbortSignal.timeout(15_000) },
       );
     } catch (cause) {
       throw new SslcommerzProviderError(
@@ -240,10 +239,12 @@ export class SslcommerzAdapter {
     if (
       !transactionId ||
       !providerTransactionId ||
-      !returnedValidationId ||
+      returnedValidationId !== validationId ||
       !currency ||
       !status ||
-      !Number.isFinite(amount)
+      !Number.isFinite(amount) ||
+      !Number.isSafeInteger(Math.round(amount * 100)) ||
+      amount <= 0
     )
       throw new SslcommerzProviderError(
         'SSLCommerz validation response is missing required fields.',
@@ -281,6 +282,7 @@ export class SslcommerzAdapter {
     try {
       response = await this.fetcher(
         `${refundEndpoint(env.SSLCOMMERZ_IS_LIVE === 'true')}?${query}`,
+        { signal: AbortSignal.timeout(15_000) },
       );
     } catch (cause) {
       throw new SslcommerzProviderError(
@@ -297,17 +299,29 @@ export class SslcommerzAdapter {
     const result = (await response.json()) as Record<string, unknown>;
     const reference = typeof result.refund_ref_id === 'string' ? result.refund_ref_id : undefined;
     const status = typeof result.status === 'string' ? result.status.toLowerCase() : '';
-    if ((status === 'success' || status === 'processing') && reference)
+    if (result.APIConnect !== 'DONE')
+      throw new SslcommerzProviderError(
+        'Provider refund request could not be confirmed.',
+        'UNKNOWN',
+      );
+    if (
+      (status === 'success' || status === 'processing') &&
+      reference &&
+      result.bank_tran_id === input.bankTransactionId
+    )
       return { providerRefundId: reference, status: 'PROCESSING' };
     if (status === 'failed')
-      return { providerRefundId: reference ?? input.refundTransactionId, status: 'FAILED' };
+      throw new SslcommerzProviderError('Provider rejected refund initiation.', 'FAILED');
     throw new SslcommerzProviderError(
       'SSLCommerz returned an invalid refund initiation response.',
       'UNKNOWN',
     );
   }
 
-  public async getRefundStatus(providerRefundId: string): Promise<SslcommerzRefundStatus> {
+  public async getRefundStatus(
+    providerRefundId: string,
+    bankTransactionId: string,
+  ): Promise<SslcommerzRefundStatus> {
     assertSslcommerzConfigured();
     const query = new URLSearchParams({
       refund_ref_id: providerRefundId,
@@ -319,6 +333,7 @@ export class SslcommerzAdapter {
     try {
       response = await this.fetcher(
         `${refundEndpoint(env.SSLCOMMERZ_IS_LIVE === 'true')}?${query}`,
+        { signal: AbortSignal.timeout(15_000) },
       );
     } catch (cause) {
       throw new SslcommerzProviderError('SSLCommerz refund status is unknown.', 'UNKNOWN', cause);
@@ -329,6 +344,15 @@ export class SslcommerzAdapter {
         'UNKNOWN',
       );
     const result = (await response.json()) as Record<string, unknown>;
+    if (
+      result.APIConnect !== 'DONE' ||
+      result.refund_ref_id !== providerRefundId ||
+      result.bank_tran_id !== bankTransactionId
+    )
+      throw new SslcommerzProviderError(
+        'Provider refund identity could not be confirmed.',
+        'UNKNOWN',
+      );
     const status = typeof result.status === 'string' ? result.status.toLowerCase() : '';
     if (status === 'refunded') return 'SUCCEEDED';
     if (status === 'processing') return 'PROCESSING';

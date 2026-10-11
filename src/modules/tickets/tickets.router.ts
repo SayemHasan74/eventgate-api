@@ -31,7 +31,7 @@ ticketsRouter.get('/', validate({ query: paginationQuerySchema }), readMyTickets
 ticketsRouter.get('/:ticketId', validate({ params: ticketIdParamsSchema }), readMyTicket);
 ticketsRouter.get('/:ticketId/qr', validate({ params: ticketIdParamsSchema }), readMyTicketQr);
 
-const checkInRouter = Router();
+const checkInRouter = Router({ mergeParams: true });
 checkInRouter.use(authenticate, authorize(UserRole.ORGANIZER, UserRole.ADMIN));
 checkInRouter.post(
   '/',

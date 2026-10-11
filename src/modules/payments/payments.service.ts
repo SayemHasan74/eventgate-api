@@ -1,210 +1,13 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
-import {
-  OrderStatus,
-  PaymentStatus,
-  Prisma,
-  RefundReason,
-  RefundStatus,
-} from '../../generated/prisma/client.js';
+import { OrderStatus, PaymentStatus, Prisma, RefundReason } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
-import { AppError } from '../../shared/errors/app-error.js';
-import {
-  assertSslcommerzConfigured,
-  SslcommerzAdapter,
-  SslcommerzProviderError,
-} from '../../integrations/sslcommerz/sslcommerz.adapter.js';
+import { SslcommerzAdapter } from '../../integrations/sslcommerz/sslcommerz.adapter.js';
 
-const conflict = (code: string, message: string, detail: string): AppError =>
-  new AppError({ statusCode: 409, code, message, errors: [{ code, message: detail }] });
-
-const notFound = (): AppError =>
-  new AppError({
-    statusCode: 404,
-    code: 'NOT_FOUND',
-    message: 'Order not found',
-    errors: [{ code: 'NOT_FOUND', message: 'Order not found.' }],
-  });
-
-const isUniqueError = (error: unknown): boolean =>
-  error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
-
-const merchantTransactionId = (orderId: string): string =>
-  `eg_${orderId.replaceAll('-', '').slice(0, 24)}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
-
-const checkoutProfileError = (): AppError =>
-  new AppError({
-    statusCode: 400,
-    code: 'CHECKOUT_PROFILE_INCOMPLETE',
-    message: 'Checkout profile is incomplete',
-    errors: [
-      {
-        code: 'CHECKOUT_PROFILE_INCOMPLETE',
-        message: 'Add phone, address, city, postal code, and country to your profile.',
-      },
-    ],
-  });
-
-export const initiateCheckout = async (
-  attendeeId: string,
-  orderId: string,
-  adapter = new SslcommerzAdapter(),
-) => {
-  assertSslcommerzConfigured();
-  let pendingAttempt: {
-    id: string;
-    merchantTransactionId: string;
-    amountPaisa: number;
-    productName: string;
-    customer: SslcommerzCustomer;
-  };
-  try {
-    pendingAttempt = await getPrisma().$transaction(
-      async (tx) => {
-        const order = await tx.order.findFirst({
-          where: { id: orderId, attendeeId },
-          include: { attendee: true, event: true },
-        });
-        if (!order) throw notFound();
-        if (
-          order.status !== 'PENDING_PAYMENT' ||
-          order.reservationReleasedAt ||
-          order.reservationExpiresAt <= new Date()
-        ) {
-          throw conflict(
-            'ORDER_NOT_PAYABLE',
-            'Order cannot be paid',
-            'Only an active, unexpired pending-payment order can start checkout.',
-          );
-        }
-        const customer = order.attendee;
-        if (
-          !customer.phone ||
-          !customer.address ||
-          !customer.city ||
-          !customer.postalCode ||
-          !customer.country
-        ) {
-          throw checkoutProfileError();
-        }
-        const activeAttempt = await tx.paymentAttempt.findFirst({
-          where: {
-            orderId: order.id,
-            status: {
-              in: [PaymentStatus.INITIATING, PaymentStatus.PENDING, PaymentStatus.UNKNOWN],
-            },
-          },
-          select: { id: true },
-        });
-        if (activeAttempt) {
-          throw conflict(
-            'ACTIVE_PAYMENT_ATTEMPT_EXISTS',
-            'Payment is already in progress',
-            'Complete or reconcile the existing payment attempt first.',
-          );
-        }
-        const sequence =
-          (
-            await tx.paymentAttempt.aggregate({
-              where: { orderId: order.id },
-              _max: { sequence: true },
-            })
-          )._max.sequence ?? 0;
-        const attempt = await tx.paymentAttempt.create({
-          data: {
-            orderId: order.id,
-            sequence: sequence + 1,
-            merchantTransactionId: merchantTransactionId(order.id),
-            amountPaisa: order.totalAmountPaisaSnapshot,
-            status: PaymentStatus.INITIATING,
-          },
-          select: { id: true, sequence: true, merchantTransactionId: true, amountPaisa: true },
-        });
-        await tx.auditLog.create({
-          data: {
-            actorId: attendeeId,
-            action: 'PAYMENT_CHECKOUT_INITIATED',
-            entityType: 'PAYMENT_ATTEMPT',
-            entityId: attempt.id,
-            metadata: { orderId: order.id, sequence: attempt.sequence },
-          },
-        });
-        return {
-          ...attempt,
-          // SSLCommerz displays this on its hosted checkout. Keep it concise so
-          // attendees can confirm they are paying for the right event and tier.
-          productName: `${order.event.title} — ${order.ticketTierNameSnapshot}`.slice(0, 255),
-          customer: {
-            name: customer.displayName,
-            email: customer.email,
-            phone: customer.phone,
-            address: customer.address,
-            city: customer.city,
-            postalCode: customer.postalCode,
-            country: customer.country,
-          },
-        };
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
-  } catch (error) {
-    if (isUniqueError(error))
-      throw conflict(
-        'ACTIVE_PAYMENT_ATTEMPT_EXISTS',
-        'Payment is already in progress',
-        'Complete or reconcile the existing payment attempt first.',
-      );
-    throw error;
-  }
-
-  try {
-    const session = await adapter.createSession({
-      merchantTransactionId: pendingAttempt.merchantTransactionId,
-      amountPaisa: pendingAttempt.amountPaisa,
-      productName: pendingAttempt.productName,
-      customer: pendingAttempt.customer,
-    });
-    await getPrisma().paymentAttempt.update({
-      where: { id: pendingAttempt.id },
-      data: { status: PaymentStatus.PENDING, providerSessionKey: session.sessionKey },
-    });
-    return {
-      paymentAttemptId: pendingAttempt.id,
-      merchantTransactionId: pendingAttempt.merchantTransactionId,
-      checkoutUrl: session.gatewayUrl,
-    };
-  } catch (error) {
-    const status =
-      error instanceof SslcommerzProviderError
-        ? error.outcome === 'FAILED'
-          ? PaymentStatus.FAILED
-          : PaymentStatus.UNKNOWN
-        : PaymentStatus.UNKNOWN;
-    await getPrisma().paymentAttempt.update({
-      where: { id: pendingAttempt.id },
-      data: {
-        status,
-        failureCode:
-          error instanceof SslcommerzProviderError
-            ? 'SSLCOMMERZ_SESSION_ERROR'
-            : 'SESSION_INITIALIZATION_ERROR',
-        failureMessage:
-          error instanceof Error ? error.message.slice(0, 2_000) : 'Unknown session error.',
-      },
-    });
-    throw error;
-  }
-};
-
-type SslcommerzCustomer = {
-  name: string;
-  email: string;
-  phone: string;
-  address: string;
-  city: string;
-  postalCode: string;
-  country: string;
-};
+export { initiateCheckout } from './checkout.service.js';
+import { serializableTransaction } from '../../lib/transaction.js';
+import { lockOrderGraph } from '../../lib/financial-locks.js';
+import { ensureCaptureRefund } from '../refunds/capture-refund.js';
 
 export type SslcommerzCallback = Record<string, unknown>;
 type CallbackType = 'IPN' | 'SUCCESS' | 'FAIL' | 'CANCEL';
@@ -224,31 +27,11 @@ const ticketToken = (): string => randomBytes(32).toString('base64url');
 const validStatus = (status: string): boolean =>
   ['VALID', 'VALIDATED'].includes(status.toUpperCase());
 
-const createAutomaticRefund = async (
-  tx: Prisma.TransactionClient,
-  orderId: string,
-  paymentAttemptId: string,
-  reason: RefundReason,
-  amountPaisa: number,
-) =>
-  tx.refund.upsert({
-    where: { orderId_reason: { orderId, reason } },
-    update: {},
-    create: {
-      orderId,
-      paymentAttemptId,
-      reason,
-      idempotencyKey: `automatic:${reason}:${paymentAttemptId}`,
-      amountPaisa,
-      status: RefundStatus.APPROVED,
-    },
-  });
-
 /**
  * This function only receives a response from SSLCommerz's validation API.  It never
  * makes decisions based on a browser redirect or an IPN request body.
  */
-const fulfillValidatedPayment = async (
+export const fulfillValidatedPayment = async (
   attemptId: string,
   validation: {
     validationId: string;
@@ -261,158 +44,88 @@ const fulfillValidatedPayment = async (
 ) => {
   if (!validStatus(validation.status)) throw new Error('SSLCommerz did not validate this payment.');
   let invalidateDiscovery = false;
-  const result = await getPrisma().$transaction(
-    async (tx) => {
-      const attempt = await tx.paymentAttempt.findUnique({
-        where: { id: attemptId },
-        include: { order: { include: { event: true } } },
-      });
-      if (!attempt) throw new Error('Payment attempt no longer exists.');
-      if (
-        attempt.merchantTransactionId !== validation.merchantTransactionId ||
-        attempt.amountPaisa !== validation.amountPaisa ||
-        attempt.currency !== validation.currency
-      ) {
-        throw new Error('Validated payment does not match its EventGate payment attempt.');
-      }
-      if (attempt.status === PaymentStatus.SUCCEEDED)
-        return { outcome: 'already-fulfilled' as const };
+  const result = await serializableTransaction(async (tx) => {
+    const identity = await tx.paymentAttempt.findUnique({
+      where: { id: attemptId },
+      select: { orderId: true },
+    });
+    if (!identity) throw new Error('Payment attempt no longer exists.');
+    await lockOrderGraph(tx, identity.orderId);
+    const attempt = await tx.paymentAttempt.findUnique({
+      where: { id: attemptId },
+      include: { order: { include: { event: true } } },
+    });
+    if (!attempt) throw new Error('Payment attempt no longer exists.');
+    if (
+      attempt.merchantTransactionId !== validation.merchantTransactionId ||
+      attempt.amountPaisa !== validation.amountPaisa ||
+      attempt.currency !== validation.currency
+    ) {
+      throw new Error('Validated payment does not match its EventGate payment attempt.');
+    }
+    if (attempt.status === PaymentStatus.SUCCEEDED)
+      return {
+        outcome: 'already-fulfilled' as const,
+        capturedAttemptId: attempt.replayOfAttemptId ?? attempt.id,
+      };
 
-      const existingProviderPayment = await tx.paymentAttempt.findUnique({
-        where: { providerTransactionId: validation.providerTransactionId },
-        select: { id: true, orderId: true },
-      });
-      if (existingProviderPayment && existingProviderPayment.id !== attempt.id) {
-        await tx.paymentAttempt.update({
-          where: { id: attempt.id },
-          data: {
-            status: PaymentStatus.SUCCEEDED,
-            providerValidationId: validation.validationId,
-            providerTransactionId: validation.providerTransactionId,
-            completedAt: new Date(),
-          },
-        });
-        await createAutomaticRefund(
-          tx,
-          attempt.orderId,
-          attempt.id,
-          RefundReason.DUPLICATE_PAYMENT,
-          attempt.amountPaisa,
-        );
-        return { outcome: 'duplicate-refund-created' as const };
-      }
-
-      const order = attempt.order;
-      if (order.status === OrderStatus.PAID) {
-        await tx.paymentAttempt.update({
-          where: { id: attempt.id },
-          data: {
-            status: PaymentStatus.SUCCEEDED,
-            providerValidationId: validation.validationId,
-            providerTransactionId: validation.providerTransactionId,
-            completedAt: new Date(),
-          },
-        });
-        await createAutomaticRefund(
-          tx,
-          order.id,
-          attempt.id,
-          RefundReason.DUPLICATE_PAYMENT,
-          attempt.amountPaisa,
-        );
-        return { outcome: 'duplicate-refund-created' as const };
-      }
-
-      const now = new Date();
-      const eventOnSale = order.event.status === 'PUBLISHED' && order.event.startAt > now;
-      const mustReacquire =
-        order.status === OrderStatus.EXPIRED ||
-        order.status === OrderStatus.CANCELLED ||
-        order.reservationExpiresAt <= now;
-      if (!eventOnSale || order.status === OrderStatus.CANCELLED) {
-        await tx.paymentAttempt.update({
-          where: { id: attempt.id },
-          data: {
-            status: PaymentStatus.SUCCEEDED,
-            providerValidationId: validation.validationId,
-            providerTransactionId: validation.providerTransactionId,
-            completedAt: now,
-          },
-        });
-        await createAutomaticRefund(
-          tx,
-          order.id,
-          attempt.id,
-          order.status === OrderStatus.CANCELLED
-            ? RefundReason.EVENT_CANCELLATION
-            : RefundReason.LATE_PAYMENT,
-          attempt.amountPaisa,
-        );
-        return { outcome: 'late-refund-created' as const };
-      }
-
-      if (mustReacquire && order.reservationReleasedAt === null) {
-        const release = await tx.$executeRaw(Prisma.sql`
-        UPDATE "TicketTier" SET "reservedQuantity" = "reservedQuantity" - ${order.quantity}
-        WHERE "id" = ${order.ticketTierId} AND "reservedQuantity" >= ${order.quantity}
-      `);
-        if (release !== 1) throw new Error('Could not release expired payment reservation.');
-        const markedExpired = await tx.order.updateMany({
-          where: {
-            id: order.id,
-            status: OrderStatus.PENDING_PAYMENT,
-            reservationReleasedAt: null,
-          },
-          data: { status: OrderStatus.EXPIRED, reservationReleasedAt: now },
-        });
-        if (markedExpired.count !== 1)
-          throw new Error('Expired order changed while payment was verified.');
-      }
-      const inventory = mustReacquire
-        ? await tx.$executeRaw(Prisma.sql`
-          UPDATE "TicketTier" AS tier SET "soldQuantity" = tier."soldQuantity" + ${order.quantity}
-          FROM "Event" AS event
-          WHERE tier."id" = ${order.ticketTierId}
-            AND event."id" = tier."eventId" AND event."status" = 'PUBLISHED'
-            AND event."startAt" > ${now} AND tier."deletedAt" IS NULL
-            AND tier."salesStartAt" <= ${now} AND tier."salesEndAt" > ${now}
-            AND tier."soldQuantity" + tier."reservedQuantity" + ${order.quantity} <= tier."capacity"
-        `)
-        : await tx.$executeRaw(Prisma.sql`
-          UPDATE "TicketTier" SET "reservedQuantity" = "reservedQuantity" - ${order.quantity},
-            "soldQuantity" = "soldQuantity" + ${order.quantity}
-          WHERE "id" = ${order.ticketTierId} AND "reservedQuantity" >= ${order.quantity}
-        `);
-      if (inventory !== 1) {
-        await tx.paymentAttempt.update({
-          where: { id: attempt.id },
-          data: {
-            status: PaymentStatus.SUCCEEDED,
-            providerValidationId: validation.validationId,
-            providerTransactionId: validation.providerTransactionId,
-            completedAt: now,
-          },
-        });
-        await createAutomaticRefund(
-          tx,
-          order.id,
-          attempt.id,
-          RefundReason.LATE_PAYMENT,
-          attempt.amountPaisa,
-        );
-        return { outcome: 'late-refund-created' as const };
-      }
-
-      const orderUpdated = await tx.order.updateMany({
-        where: { id: order.id, status: { in: [OrderStatus.PENDING_PAYMENT, OrderStatus.EXPIRED] } },
+    const existingProviderPayment = await tx.paymentAttempt.findUnique({
+      where: { providerTransactionId: validation.providerTransactionId },
+      select: { id: true, orderId: true },
+    });
+    if (existingProviderPayment && existingProviderPayment.id !== attempt.id) {
+      await tx.paymentAttempt.update({
+        where: { id: attempt.id },
         data: {
-          status: OrderStatus.PAID,
-          paidAt: now,
-          reservationReleasedAt: order.reservationReleasedAt ?? (mustReacquire ? now : null),
+          status: PaymentStatus.SUCCEEDED,
+          replayOfAttemptId: existingProviderPayment.id,
+          completedAt: new Date(),
+          providerValidationId: null,
         },
       });
-      if (orderUpdated.count !== 1)
-        throw new Error('Order changed while its payment was being fulfilled.');
+      await tx.auditLog.create({
+        data: {
+          action: 'PAYMENT_CAPTURE_REPLAY',
+          entityType: 'PAYMENT_ATTEMPT',
+          entityId: attempt.id,
+          metadata: { capturedPaymentAttemptId: existingProviderPayment.id },
+        },
+      });
+      return { outcome: 'capture-replay' as const, capturedAttemptId: existingProviderPayment.id };
+    }
+
+    const order = attempt.order;
+    if (
+      order.fulfilledPaymentAttemptId ||
+      order.status === OrderStatus.PAID ||
+      order.status === OrderStatus.REFUNDED
+    ) {
+      await tx.paymentAttempt.update({
+        where: { id: attempt.id },
+        data: {
+          status: PaymentStatus.SUCCEEDED,
+          providerValidationId: validation.validationId,
+          providerTransactionId: validation.providerTransactionId,
+          completedAt: new Date(),
+        },
+      });
+      await ensureCaptureRefund(
+        tx,
+        order.id,
+        attempt.id,
+        RefundReason.DUPLICATE_PAYMENT,
+        attempt.amountPaisa,
+      );
+      return { outcome: 'duplicate-refund-created' as const };
+    }
+
+    const now = new Date();
+    const eventOnSale = order.event.status === 'PUBLISHED' && order.event.startAt > now;
+    const mustReacquire =
+      order.status === OrderStatus.EXPIRED ||
+      order.status === OrderStatus.CANCELLED ||
+      order.reservationExpiresAt <= now;
+    if (!eventOnSale || order.status === OrderStatus.CANCELLED) {
       await tx.paymentAttempt.update({
         where: { id: attempt.id },
         data: {
@@ -422,32 +135,115 @@ const fulfillValidatedPayment = async (
           completedAt: now,
         },
       });
-      await tx.ticket.createMany({
-        data: Array.from({ length: order.quantity }, (_, index) => ({
-          orderId: order.id,
-          eventId: order.eventId,
-          ticketTierId: order.ticketTierId,
-          attendeeId: order.attendeeId,
-          sequence: index + 1,
-          qrToken: ticketToken(),
-        })),
+      await ensureCaptureRefund(
+        tx,
+        order.id,
+        attempt.id,
+        order.status === OrderStatus.CANCELLED
+          ? RefundReason.EVENT_CANCELLATION
+          : RefundReason.LATE_PAYMENT,
+        attempt.amountPaisa,
+      );
+      return { outcome: 'late-refund-created' as const };
+    }
+
+    if (mustReacquire && order.reservationReleasedAt === null) {
+      const release = await tx.$executeRaw(Prisma.sql`
+        UPDATE "TicketTier" SET "reservedQuantity" = "reservedQuantity" - ${order.quantity}
+        WHERE "id" = ${order.ticketTierId} AND "reservedQuantity" >= ${order.quantity}
+      `);
+      if (release !== 1) throw new Error('Could not release expired payment reservation.');
+      const markedExpired = await tx.order.updateMany({
+        where: {
+          id: order.id,
+          status: OrderStatus.PENDING_PAYMENT,
+          reservationReleasedAt: null,
+        },
+        data: { status: OrderStatus.EXPIRED, reservationReleasedAt: now },
       });
-      await tx.auditLog.create({
+      if (markedExpired.count !== 1)
+        throw new Error('Expired order changed while payment was verified.');
+      invalidateDiscovery = true;
+    }
+    const inventory = mustReacquire
+      ? await tx.$executeRaw(Prisma.sql`
+          UPDATE "TicketTier" AS tier SET "soldQuantity" = tier."soldQuantity" + ${order.quantity}
+          FROM "Event" AS event
+          WHERE tier."id" = ${order.ticketTierId}
+            AND event."id" = tier."eventId" AND event."status" = 'PUBLISHED'
+            AND event."startAt" > ${now} AND tier."deletedAt" IS NULL
+            AND tier."salesStartAt" <= ${now} AND tier."salesEndAt" > ${now}
+            AND tier."soldQuantity" + tier."reservedQuantity" + ${order.quantity} <= tier."capacity"
+        `)
+      : await tx.$executeRaw(Prisma.sql`
+          UPDATE "TicketTier" SET "reservedQuantity" = "reservedQuantity" - ${order.quantity},
+            "soldQuantity" = "soldQuantity" + ${order.quantity}
+          WHERE "id" = ${order.ticketTierId} AND "reservedQuantity" >= ${order.quantity}
+        `);
+    if (inventory !== 1) {
+      await tx.paymentAttempt.update({
+        where: { id: attempt.id },
         data: {
-          action: 'PAYMENT_VERIFIED_AND_ORDER_FULFILLED',
-          entityType: 'ORDER',
-          entityId: order.id,
-          metadata: {
-            paymentAttemptId: attempt.id,
-            providerTransactionId: validation.providerTransactionId,
-          },
+          status: PaymentStatus.SUCCEEDED,
+          providerValidationId: validation.validationId,
+          providerTransactionId: validation.providerTransactionId,
+          completedAt: now,
         },
       });
-      invalidateDiscovery = true;
-      return { outcome: 'fulfilled' as const };
-    },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-  );
+      await ensureCaptureRefund(
+        tx,
+        order.id,
+        attempt.id,
+        RefundReason.LATE_PAYMENT,
+        attempt.amountPaisa,
+      );
+      return { outcome: 'late-refund-created' as const };
+    }
+
+    const orderUpdated = await tx.order.updateMany({
+      where: { id: order.id, status: { in: [OrderStatus.PENDING_PAYMENT, OrderStatus.EXPIRED] } },
+      data: {
+        status: OrderStatus.PAID,
+        paidAt: now,
+        fulfilledPaymentAttemptId: attempt.id,
+        reservationReleasedAt: order.reservationReleasedAt ?? (mustReacquire ? now : null),
+      },
+    });
+    if (orderUpdated.count !== 1)
+      throw new Error('Order changed while its payment was being fulfilled.');
+    await tx.paymentAttempt.update({
+      where: { id: attempt.id },
+      data: {
+        status: PaymentStatus.SUCCEEDED,
+        providerValidationId: validation.validationId,
+        providerTransactionId: validation.providerTransactionId,
+        completedAt: now,
+      },
+    });
+    await tx.ticket.createMany({
+      data: Array.from({ length: order.quantity }, (_, index) => ({
+        orderId: order.id,
+        eventId: order.eventId,
+        ticketTierId: order.ticketTierId,
+        attendeeId: order.attendeeId,
+        sequence: index + 1,
+        qrToken: ticketToken(),
+      })),
+    });
+    await tx.auditLog.create({
+      data: {
+        action: 'PAYMENT_VERIFIED_AND_ORDER_FULFILLED',
+        entityType: 'ORDER',
+        entityId: order.id,
+        metadata: {
+          paymentAttemptId: attempt.id,
+          providerTransactionId: validation.providerTransactionId,
+        },
+      },
+    });
+    invalidateDiscovery = true;
+    return { outcome: 'fulfilled' as const };
+  });
   if (invalidateDiscovery)
     await import('../public-events/public-events.cache.js').then(
       ({ invalidatePublicDiscoveryCache }) => invalidatePublicDiscoveryCache(),
@@ -510,17 +306,21 @@ export const processSslcommerzCallback = async (
   }
   try {
     const validation = await adapter.validateTransaction(validationId);
-    await fulfillValidatedPayment(attempt.id, validation);
+    const fulfillment = await fulfillValidatedPayment(attempt.id, validation);
     await getPrisma().paymentEvent.update({
       where: { id: event.id },
-      data: { processedAt: new Date(), processingError: null },
+      data: {
+        processedAt: new Date(),
+        processingError: null,
+        capturedPaymentAttemptId:
+          'capturedAttemptId' in fulfillment ? fulfillment.capturedAttemptId : attempt.id,
+      },
     });
   } catch (error) {
     await getPrisma().paymentAttempt.updateMany({
       where: { id: attempt.id, status: { in: [PaymentStatus.INITIATING, PaymentStatus.PENDING] } },
       data: {
         status: PaymentStatus.UNKNOWN,
-        providerValidationId: validationId,
         failureCode: 'PAYMENT_VERIFICATION_PENDING',
         failureMessage:
           error instanceof Error ? error.message.slice(0, 2_000) : 'Verification failed.',
@@ -544,8 +344,17 @@ export const reconcilePaymentAttempt = async (
 ): Promise<void> => {
   const attempt = await getPrisma().paymentAttempt.findUnique({ where: { id: paymentAttemptId } });
   if (!attempt || attempt.status !== PaymentStatus.UNKNOWN) return;
-  if (!attempt.providerValidationId)
+  const callback = await getPrisma().paymentEvent.findFirst({
+    where: { paymentAttemptId, processedAt: null },
+    orderBy: { receivedAt: 'desc' },
+  });
+  const validationId =
+    attempt.providerValidationId ??
+    (callback?.payload && typeof callback.payload === 'object' && !Array.isArray(callback.payload)
+      ? callbackString(callback.payload as SslcommerzCallback, 'val_id')
+      : undefined);
+  if (!validationId)
     throw new Error('Cannot reconcile payment attempt without an SSLCommerz validation id.');
-  const validation = await adapter.validateTransaction(attempt.providerValidationId);
+  const validation = await adapter.validateTransaction(validationId);
   await fulfillValidatedPayment(attempt.id, validation);
 };
