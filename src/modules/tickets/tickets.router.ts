@@ -22,6 +22,10 @@ import {
 import { paginationQuerySchema } from '../../shared/responses/pagination.js';
 
 const ticketsRouter = Router();
+ticketsRouter.use((_request, response, next) => {
+  response.setHeader('Cache-Control', 'private, no-store');
+  next();
+});
 ticketsRouter.use(authenticate, authorize(UserRole.ATTENDEE));
 ticketsRouter.get('/', validate({ query: paginationQuerySchema }), readMyTickets);
 ticketsRouter.get('/:ticketId', validate({ params: ticketIdParamsSchema }), readMyTicket);

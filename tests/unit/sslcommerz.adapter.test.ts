@@ -18,6 +18,7 @@ const { SslcommerzAdapter } =
 const request = {
   merchantTransactionId: 'eg_transaction_123',
   amountPaisa: 12345,
+  productName: 'Test admission',
   customer: {
     name: 'Attendee',
     email: 'attendee@example.com',
@@ -30,6 +31,28 @@ const request = {
 };
 
 describe('SSLCommerz session adapter', () => {
+  it.each([
+    'http://sandbox.sslcommerz.com/checkout',
+    'https://attacker.test/checkout',
+    'https://password@sandbox.sslcommerz.com/checkout',
+    'https://sandbox.sslcommerz.com/checkout?store_passwd=DO_NOT_EXPOSE',
+    'https://sandbox.sslcommerz.com:444/checkout',
+    'https://sandbox.sslcommerz.com/checkout#secret',
+  ])('rejects unsafe hosted addresses without disclosing them: %s', async (gatewayUrl) => {
+    const adapter = new SslcommerzAdapter(
+      vi.fn().mockResolvedValue(
+        Response.json({
+          status: 'SUCCESS',
+          sessionkey: 'fixture-session',
+          GatewayPageURL: gatewayUrl,
+        }),
+      ),
+    );
+    await expect(adapter.createSession(request)).rejects.toMatchObject({
+      outcome: 'UNKNOWN',
+      message: 'SSLCommerz returned an unsafe checkout address.',
+    });
+  });
   it('posts the documented sandbox form fields and returns a hosted URL', async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(

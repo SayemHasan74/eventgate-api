@@ -29,6 +29,27 @@ export type SslcommerzSessionRequest = {
 
 export type SslcommerzSession = { sessionKey: string; gatewayUrl: string };
 
+const trustedCheckoutUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === 'https:' &&
+      (!url.port || url.port === '443') &&
+      !url.username &&
+      !url.password &&
+      !url.hash &&
+      ['sandbox.sslcommerz.com', 'securepay.sslcommerz.com'].includes(url.hostname) &&
+      ![...url.searchParams.keys()].some((key) =>
+        /(passwd|password|secret|access[_-]?token|refresh[_-]?token|api[_-]?key|credential)/i.test(
+          key,
+        ),
+      )
+    );
+  } catch {
+    return false;
+  }
+};
+
 export type SslcommerzValidation = {
   validationId: string;
   merchantTransactionId: string;
@@ -156,6 +177,13 @@ export class SslcommerzAdapter {
           ? result.failedreason
           : 'Session creation was rejected.';
       throw new SslcommerzProviderError(`SSLCommerz rejected the session: ${detail}`, 'FAILED');
+    }
+    if (!trustedCheckoutUrl(gatewayUrl)) {
+      // A session may already exist at the provider. Never disclose the address or retry blindly.
+      throw new SslcommerzProviderError(
+        'SSLCommerz returned an unsafe checkout address.',
+        'UNKNOWN',
+      );
     }
     return { sessionKey, gatewayUrl };
   }

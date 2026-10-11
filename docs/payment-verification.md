@@ -1,6 +1,6 @@
 # Payment verification and fulfillment
 
-SSLCommerz IPN and browser callback requests are form encoded and receive a plain `200 OK` acknowledgement. EventGate stores the request before processing it, but never trusts its status, amount, transaction ID, or redirect destination.
+SSLCommerz IPN and browser callback requests are form encoded. IPN receives a plain `200 OK` acknowledgement; browser success/failure/cancel callbacks receive a `303` redirect to the frontend. These are deliberate exceptions to the ordinary JSON envelope. EventGate stores the request before processing it, but never trusts its status, amount, transaction ID, or redirect destination.
 
 For an IPN or success callback with both `tran_id` and `val_id`, EventGate calls SSLCommerz's validation endpoint. The response must be `VALID` or `VALIDATED` and match the saved merchant transaction ID, amount, and `BDT` currency. The provider's bank transaction ID is unique in the database.
 
