@@ -62,3 +62,8 @@ export const incrementCache = async (key: string): Promise<void> => {
     logUnavailable(error);
   }
 };
+
+export const closeRedis = async (): Promise<void> => {
+  await connectionAttempt;
+  if (client?.isOpen) client.destroy();
+};

@@ -105,6 +105,59 @@ export const assertSslcommerzConfigured = (): void => {
 export class SslcommerzAdapter {
   public constructor(private readonly fetcher: Fetcher = fetch) {}
 
+  public async lookupTransaction(input: {
+    merchantTransactionId: string;
+    sessionKey?: string | null;
+  }): Promise<
+    { status: 'CAPTURED'; validationId: string } | { status: 'FAILED' | 'PENDING' | 'UNKNOWN' }
+  > {
+    assertSslcommerzConfigured();
+    const query = new URLSearchParams({
+      store_id: env.SSLCOMMERZ_STORE_ID!,
+      store_passwd: env.SSLCOMMERZ_STORE_PASSWORD!,
+      format: 'json',
+      ...(input.sessionKey
+        ? { sessionkey: input.sessionKey }
+        : { tran_id: input.merchantTransactionId }),
+    });
+    // Official session/merchant query API. Absence of a transaction is NOT evidence of failure.
+    const response = await this.fetcher(
+      `${refundEndpoint(env.SSLCOMMERZ_IS_LIVE === 'true')}?${query}`,
+      {
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+    if (!response.ok) throw new SslcommerzProviderError('Payment lookup unavailable.', 'UNKNOWN');
+    const payload: unknown = await response.json();
+    if (!payload || typeof payload !== 'object') return { status: 'UNKNOWN' };
+    const result = payload as Record<string, unknown>;
+    if (result.APIConnect !== 'DONE') return { status: 'UNKNOWN' };
+    const rows = input.sessionKey ? [result] : Array.isArray(result.element) ? result.element : [];
+    if (!rows.length || rows.length > 100) return { status: 'UNKNOWN' };
+    const records: Record<string, unknown>[] = [];
+    for (const row of rows) {
+      if (
+        !row ||
+        typeof row !== 'object' ||
+        row.tran_id !== input.merchantTransactionId ||
+        (input.sessionKey && row.sessionkey !== input.sessionKey)
+      )
+        return { status: 'UNKNOWN' };
+      records.push(row as Record<string, unknown>);
+    }
+    const captures = records.filter((row) => row.status === 'VALID' || row.status === 'VALIDATED');
+    const validationIds = [...new Set(captures.map((row) => row.val_id))];
+    if (captures.length) {
+      if (validationIds.length !== 1 || typeof validationIds[0] !== 'string' || !validationIds[0])
+        return { status: 'UNKNOWN' };
+      return { status: 'CAPTURED', validationId: validationIds[0] };
+    }
+    if (records.every((row) => row.status === 'FAILED')) return { status: 'FAILED' };
+    if (records.every((row) => row.status === 'PENDING' || row.status === 'FAILED'))
+      return { status: 'PENDING' };
+    return { status: 'UNKNOWN' };
+  }
+
   public async createSession(input: SslcommerzSessionRequest): Promise<SslcommerzSession> {
     assertSslcommerzConfigured();
     const body = new URLSearchParams({

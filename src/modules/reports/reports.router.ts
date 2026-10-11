@@ -13,6 +13,8 @@ import {
 } from './reports.controller.js';
 import { auditLogQuerySchema } from './reports.schemas.js';
 import { paginationQuerySchema } from '../../shared/responses/pagination.js';
+import { maintenanceStatus } from '../../jobs/maintenance.service.js';
+import { sendSuccess } from '../../shared/responses/api-response.js';
 const organizerReportsRouter = Router({ mergeParams: true });
 organizerReportsRouter.use(authenticate, authorize(UserRole.ORGANIZER, UserRole.ADMIN));
 organizerReportsRouter.get(
@@ -29,5 +31,9 @@ const adminReportsRouter = Router();
 adminReportsRouter.use(authenticate, authorize(UserRole.ADMIN));
 adminReportsRouter.get('/statistics', readPlatformStats);
 adminReportsRouter.get('/operations', readOperations);
+adminReportsRouter.get('/maintenance', async (_request, response) => {
+  response.setHeader('Cache-Control', 'private, no-store');
+  sendSuccess(response, 200, 'Maintenance status retrieved', await maintenanceStatus());
+});
 adminReportsRouter.get('/audit-logs', validate({ query: auditLogQuerySchema }), readAuditLogs);
 export { adminReportsRouter, organizerReportsRouter };

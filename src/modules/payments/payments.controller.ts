@@ -54,7 +54,7 @@ export const receiveSslcommerzCallback =
   async (request, response) => {
     // SSLCommerz expects a quick acknowledgement. Its callback payload is persisted first;
     // payment state is based only on the subsequent validation API response.
-    await processSslcommerzCallback(type, request.body as Record<string, unknown>);
+    await processSslcommerzCallback(type, request.body as Record<string, unknown>, undefined, true);
 
     // IPN is SSLCommerz's server-to-server callback and needs a plain acknowledgement.
     // Browser callbacks should return the customer to EventGate, not expose an internal

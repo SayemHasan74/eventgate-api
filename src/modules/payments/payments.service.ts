@@ -255,16 +255,40 @@ export const processSslcommerzCallback = async (
   type: CallbackType,
   payload: SslcommerzCallback,
   adapter = new SslcommerzAdapter(),
+  deferVerification = false,
 ): Promise<{ accepted: true }> => {
-  const event = await getPrisma().paymentEvent.upsert({
-    where: { providerEventKey: callbackKey(type, payload) },
-    update: {},
-    create: {
-      providerEventKey: callbackKey(type, payload),
-      eventType: `SSLCOMMERZ_${type}`,
-      payload: payload as Prisma.InputJsonValue,
-    },
+  const event = await getPrisma().$transaction(async (tx) => {
+    const recorded = await tx.paymentEvent.upsert({
+      where: { providerEventKey: callbackKey(type, payload) },
+      update: {},
+      create: {
+        providerEventKey: callbackKey(type, payload),
+        eventType: `SSLCOMMERZ_${type}`,
+        payload: payload as Prisma.InputJsonValue,
+      },
+    });
+    if (!recorded.processedAt)
+      await tx.job.upsert({
+        where: { deduplicationKey: `payment-event:${recorded.id}` },
+        update: {},
+        create: {
+          type: 'RECONCILE_PAYMENT_EVENT',
+          deduplicationKey: `payment-event:${recorded.id}`,
+          payload: { paymentEventId: recorded.id },
+          runAt: new Date(),
+        },
+      });
+    return recorded;
   });
+  if (!deferVerification) await processPaymentEvent(event.id, adapter);
+  return { accepted: true };
+};
+
+export const processPaymentEvent = async (eventId: string, adapter = new SslcommerzAdapter()) => {
+  const event = await getPrisma().paymentEvent.findUnique({ where: { id: eventId } });
+  if (!event) return;
+  const payload = event.payload as SslcommerzCallback;
+  const type = event.eventType.replace('SSLCOMMERZ_', '') as CallbackType;
   if (event.processedAt) return { accepted: true };
   const merchantTransactionId = callbackString(payload, 'tran_id');
   const validationId = callbackString(payload, 'val_id');
@@ -333,6 +357,7 @@ export const processSslcommerzCallback = async (
           error instanceof Error ? error.message.slice(0, 2_000) : 'Callback processing failed.',
       },
     });
+    throw new Error('Persisted payment callback verification needs retry.', { cause: error });
   }
   return { accepted: true };
 };
@@ -343,7 +368,7 @@ export const reconcilePaymentAttempt = async (
   adapter = new SslcommerzAdapter(),
 ): Promise<void> => {
   const attempt = await getPrisma().paymentAttempt.findUnique({ where: { id: paymentAttemptId } });
-  if (!attempt || attempt.status !== PaymentStatus.UNKNOWN) return;
+  if (!attempt || !['UNKNOWN', 'INITIATING', 'PENDING'].includes(attempt.status)) return;
   const callback = await getPrisma().paymentEvent.findFirst({
     where: { paymentAttemptId, processedAt: null },
     orderBy: { receivedAt: 'desc' },
@@ -353,8 +378,54 @@ export const reconcilePaymentAttempt = async (
     (callback?.payload && typeof callback.payload === 'object' && !Array.isArray(callback.payload)
       ? callbackString(callback.payload as SslcommerzCallback, 'val_id')
       : undefined);
-  if (!validationId)
-    throw new Error('Cannot reconcile payment attempt without an SSLCommerz validation id.');
-  const validation = await adapter.validateTransaction(validationId);
-  await fulfillValidatedPayment(attempt.id, validation);
+  try {
+    const lookup = validationId
+      ? { status: 'CAPTURED' as const, validationId }
+      : await adapter.lookupTransaction({
+          merchantTransactionId: attempt.merchantTransactionId,
+          sessionKey: attempt.providerSessionKey,
+        });
+    if (lookup.status === 'CAPTURED') {
+      const validation = await adapter.validateTransaction(lookup.validationId);
+      await fulfillValidatedPayment(attempt.id, validation);
+      return;
+    }
+    if (lookup.status === 'FAILED') {
+      await serializableTransaction(async (tx) => {
+        await lockOrderGraph(tx, attempt.orderId);
+        await tx.paymentAttempt.updateMany({
+          where: { id: attempt.id, status: { in: ['INITIATING', 'PENDING', 'UNKNOWN'] } },
+          data: {
+            status: 'FAILED',
+            completedAt: new Date(),
+            failureCode: 'PROVIDER_CONFIRMED_NO_PAYMENT',
+            failureMessage:
+              'Provider confirmed this transaction failed; a new checkout is permitted.',
+          },
+        });
+      });
+      return;
+    }
+    await getPrisma().paymentAttempt.updateMany({
+      where: { id: attempt.id, status: { in: ['INITIATING', 'PENDING', 'UNKNOWN'] } },
+      data: {
+        status: 'UNKNOWN',
+        failureCode:
+          lookup.status === 'PENDING' ? 'PROVIDER_PAYMENT_PENDING' : 'PAYMENT_LOOKUP_UNRESOLVED',
+        failureMessage:
+          'Payment is not confirmed. Automatic new checkout is blocked pending provider reconciliation.',
+      },
+    });
+  } catch {
+    await getPrisma().paymentAttempt.updateMany({
+      where: { id: attempt.id, status: { in: ['INITIATING', 'PENDING', 'UNKNOWN'] } },
+      data: {
+        status: 'UNKNOWN',
+        failureCode: 'PAYMENT_LOOKUP_UNRESOLVED',
+        failureMessage:
+          'Provider verification unavailable; investigate this attempt before retrying checkout.',
+      },
+    });
+    throw new Error('Payment recovery remains unresolved.');
+  }
 };

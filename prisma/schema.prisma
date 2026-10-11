@@ -85,6 +85,7 @@ enum IdempotencyStatus {
 enum JobType {
   EXPIRE_ORDER_RESERVATION
   RECONCILE_PAYMENT
+  RECONCILE_PAYMENT_EVENT
   RECONCILE_REFUND
   PROCESS_EVENT_CANCELLATION
   COMPLETE_EVENT
@@ -409,8 +410,10 @@ model Job {
   runAt            DateTime  @db.Timestamptz(6)
   lockedAt         DateTime? @db.Timestamptz(6)
   lockedBy         String?   @db.VarChar(120)
+  leaseToken       String?   @db.Uuid
   leaseExpiresAt   DateTime? @db.Timestamptz(6)
   attempts         Int       @default(0)
+  failureAttempts  Int       @default(0)
   maxAttempts      Int       @default(10)
   lastError        String?   @db.Text
   completedAt      DateTime? @db.Timestamptz(6)
@@ -420,4 +423,16 @@ model Job {
   @@index([status, runAt])
   @@index([type, status])
   @@index([leaseExpiresAt])
+}
+
+model MaintenanceState {
+  id              String    @id @db.VarChar(80)
+  runToken        String?   @db.Uuid
+  lastStartedAt   DateTime? @db.Timestamptz(6)
+  lastCompletedAt DateTime? @db.Timestamptz(6)
+  heartbeatAt     DateTime? @db.Timestamptz(6)
+  processed       Int       @default(0)
+  failed          Int       @default(0)
+  lastFailureAt   DateTime? @db.Timestamptz(6)
+  lastFailure     String?   @db.VarChar(255)
 }
