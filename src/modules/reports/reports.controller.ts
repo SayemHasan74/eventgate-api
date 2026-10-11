@@ -1,4 +1,5 @@
 import type { RequestHandler } from 'express';
+import { paginationQuerySchema, paginationMeta } from '../../shared/responses/pagination.js';
 import { sendList, sendSuccess } from '../../shared/responses/api-response.js';
 import {
   adminOperations,
@@ -8,13 +9,11 @@ import {
   platformStatistics,
 } from './reports.service.js';
 import type { AuditLogQuery } from './reports.schemas.js';
-export const readEventOrders: RequestHandler = async (r, s) =>
-  sendList(s, 'Event orders retrieved', await eventOrders(r.auth, r.params.eventId as string), {
-    page: 1,
-    limit: 100,
-    total: 0,
-    totalPages: 0,
-  });
+export const readEventOrders: RequestHandler = async (r, s) => {
+  const query = paginationQuerySchema.parse(r.query);
+  const result = await eventOrders(r.auth, r.params.eventId as string, query);
+  sendList(s, 'Event orders retrieved', result.orders, paginationMeta(query, result.total));
+};
 export const readEventStats: RequestHandler = async (r, s) =>
   sendSuccess(
     s,

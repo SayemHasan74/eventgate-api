@@ -12,9 +12,14 @@ import {
   readPlatformStats,
 } from './reports.controller.js';
 import { auditLogQuerySchema } from './reports.schemas.js';
+import { paginationQuerySchema } from '../../shared/responses/pagination.js';
 const organizerReportsRouter = Router({ mergeParams: true });
 organizerReportsRouter.use(authenticate, authorize(UserRole.ORGANIZER, UserRole.ADMIN));
-organizerReportsRouter.get('/orders', validate({ params: eventIdParamsSchema }), readEventOrders);
+organizerReportsRouter.get(
+  '/orders',
+  validate({ params: eventIdParamsSchema, query: paginationQuerySchema }),
+  readEventOrders,
+);
 organizerReportsRouter.get(
   '/statistics',
   validate({ params: eventIdParamsSchema }),

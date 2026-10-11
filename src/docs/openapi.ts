@@ -365,14 +365,54 @@ export const openapi = {
         responses: { '200': { description: 'Ticket' }, '404': { description: 'Not found' } },
       },
     },
+    '/payments/attempts/{attemptId}': {
+      get: {
+        tags: ['05 Payments'],
+        summary: 'Read own payment attempt state without provider credentials',
+        security: bearer,
+        parameters: [pathUuid('attemptId', 'PASTE_PAYMENT_ATTEMPT_ID')],
+        responses: {
+          '200': { description: 'Safe attempt in a JSON envelope; private,no-store' },
+          '404': { description: 'Not owned or unavailable' },
+        },
+      },
+    },
     '/tickets/{ticketId}/qr': {
       get: {
         tags: ['06 Tickets and check-in'],
-        summary: 'Get own QR SVG',
+        summary: 'Get own private QR PNG in a JSON envelope',
         security: bearer,
         parameters: [pathUuid('ticketId', 'PASTE_TICKET_ID_FROM_PAID_ORDER')],
         responses: {
-          '200': { description: 'SVG QR image', content: { 'image/svg+xml': {} } },
+          '200': {
+            description:
+              'Private, no-store JSON PNG QR. The browser BFF uses the same contract; deploy both revisions together.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['success', 'message', 'data'],
+                  properties: {
+                    success: { type: 'boolean', enum: [true] },
+                    message: { type: 'string' },
+                    data: {
+                      type: 'object',
+                      required: ['ticketId', 'mimeType', 'dataUrl'],
+                      properties: {
+                        ticketId: { type: 'string', format: 'uuid' },
+                        mimeType: { type: 'string', enum: ['image/png'] },
+                        dataUrl: {
+                          type: 'string',
+                          pattern: '^data:image/png;base64,',
+                          description: 'PNG data URL, never the raw QR credential',
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
           '404': { description: 'Not owned or unavailable' },
         },
       },

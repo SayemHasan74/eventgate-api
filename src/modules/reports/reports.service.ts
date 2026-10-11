@@ -1,3 +1,4 @@
+import type { PaginationQuery } from '../../shared/responses/pagination.js';
 import { OrderStatus, UserRole } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
@@ -22,22 +23,33 @@ const eventAccess = async (actor: { id: string; role: UserRole }, eventId: strin
   return event;
 };
 
-export const eventOrders = async (actor: { id: string; role: UserRole }, eventId: string) => {
+export const eventOrders = async (
+  actor: { id: string; role: UserRole },
+  eventId: string,
+  query: PaginationQuery,
+) => {
   await eventAccess(actor, eventId);
-  return getPrisma().order.findMany({
-    where: { eventId },
-    select: {
-      id: true,
-      quantity: true,
-      totalAmountPaisaSnapshot: true,
-      currency: true,
-      status: true,
-      createdAt: true,
-      attendee: { select: { displayName: true, email: true } },
-      ticketTier: { select: { name: true } },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+  const database = getPrisma();
+  const [orders, total] = await database.$transaction([
+    database.order.findMany({
+      where: { eventId },
+      select: {
+        id: true,
+        quantity: true,
+        totalAmountPaisaSnapshot: true,
+        currency: true,
+        status: true,
+        createdAt: true,
+        attendee: { select: { displayName: true, email: true } },
+        ticketTier: { select: { name: true } },
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+    }),
+    database.order.count({ where: { eventId } }),
+  ]);
+  return { orders, total };
 };
 
 export const eventStatistics = async (actor: { id: string; role: UserRole }, eventId: string) => {

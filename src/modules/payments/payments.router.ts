@@ -7,11 +7,22 @@ import { authorize } from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
 import { AppError } from '../../shared/errors/app-error.js';
 
-import { beginCheckout, receiveSslcommerzCallback } from './payments.controller.js';
+import {
+  beginCheckout,
+  readPaymentAttempt,
+  receiveSslcommerzCallback,
+} from './payments.controller.js';
 import { paymentOrderIdParamsSchema } from './payments.schemas.js';
+
+import { z } from 'zod';
 
 const paymentsRouter = Router();
 paymentsRouter.use(authenticate, authorize(UserRole.ATTENDEE));
+paymentsRouter.get(
+  '/attempts/:attemptId',
+  validate({ params: z.object({ attemptId: z.string().uuid() }).strict() }),
+  readPaymentAttempt,
+);
 const requireIdempotencyKey: RequestHandler = (request, _response, next) => {
   const key = request.get('Idempotency-Key');
   if (key && key.trim().length <= 255) return next();

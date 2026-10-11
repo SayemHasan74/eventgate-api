@@ -1,9 +1,10 @@
-import { toString } from 'qrcode';
+import { toDataURL } from 'qrcode';
 
 import { EventStatus, Prisma, TicketStatus, UserRole } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
 
+import type { PaginationQuery } from '../../shared/responses/pagination.js';
 import type { CheckInHistoryQuery, CheckInInput } from './tickets.schemas.js';
 
 const checkInOpenLeadMilliseconds = 2 * 60 * 60 * 1000;
@@ -34,12 +35,21 @@ const ticketSelect = {
   ticketTier: { select: { name: true } },
 } satisfies Prisma.TicketSelect;
 
-export const listMyTickets = (attendeeId: string) =>
-  getPrisma().ticket.findMany({
-    where: { attendeeId },
-    select: ticketSelect,
-    orderBy: { createdAt: 'desc' },
-  });
+export const listMyTickets = async (attendeeId: string, query: PaginationQuery) => {
+  const database = getPrisma();
+  const where = { attendeeId };
+  const [tickets, total] = await database.$transaction([
+    database.ticket.findMany({
+      where,
+      select: ticketSelect,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+    }),
+    database.ticket.count({ where }),
+  ]);
+  return { tickets, total };
+};
 
 export const getMyTicket = async (attendeeId: string, ticketId: string) => {
   const ticket = await getPrisma().ticket.findFirst({
@@ -50,19 +60,23 @@ export const getMyTicket = async (attendeeId: string, ticketId: string) => {
   return ticket;
 };
 
-export const getMyTicketQrSvg = async (attendeeId: string, ticketId: string): Promise<string> => {
+export const getMyTicketQr = async (attendeeId: string, ticketId: string) => {
   const ticket = await getPrisma().ticket.findFirst({
     where: { id: ticketId, attendeeId, status: TicketStatus.ACTIVE },
     select: { qrToken: true },
   });
   if (!ticket) throw notFound();
   // The opaque 256-bit credential is the only QR content: no attendee data is exposed.
-  return toString(ticket.qrToken, {
-    type: 'svg',
-    errorCorrectionLevel: 'M',
-    margin: 1,
-    width: 320,
-  });
+  return {
+    ticketId,
+    mimeType: 'image/png' as const,
+    dataUrl: await toDataURL(ticket.qrToken, {
+      type: 'image/png',
+      errorCorrectionLevel: 'M',
+      margin: 1,
+      width: 320,
+    }),
+  };
 };
 
 const assertEventCheckInAccess = async (actor: { id: string; role: UserRole }, eventId: string) => {

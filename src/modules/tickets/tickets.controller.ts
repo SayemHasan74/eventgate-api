@@ -1,18 +1,21 @@
 import type { RequestHandler } from 'express';
+import { paginationQuerySchema, paginationMeta } from '../../shared/responses/pagination.js';
 
 import { sendList, sendSuccess } from '../../shared/responses/api-response.js';
 
 import {
   checkInTicket,
   getMyTicket,
-  getMyTicketQrSvg,
+  getMyTicketQr,
   listCheckInHistory,
   listMyTickets,
 } from './tickets.service.js';
 import type { CheckInHistoryQuery } from './tickets.schemas.js';
 
 export const readMyTickets: RequestHandler = async (request, response) => {
-  sendSuccess(response, 200, 'Tickets retrieved', await listMyTickets(request.auth.id));
+  const query = paginationQuerySchema.parse(request.query);
+  const result = await listMyTickets(request.auth.id, query);
+  sendList(response, 'Tickets retrieved', result.tickets, paginationMeta(query, result.total));
 };
 
 export const readMyTicket: RequestHandler = async (request, response) => {
@@ -26,9 +29,12 @@ export const readMyTicket: RequestHandler = async (request, response) => {
 
 export const readMyTicketQr: RequestHandler = async (request, response) => {
   response.setHeader('Cache-Control', 'private, no-store');
-  response
-    .type('image/svg+xml')
-    .send(await getMyTicketQrSvg(request.auth.id, request.params.ticketId as string));
+  sendSuccess(
+    response,
+    200,
+    'Ticket QR retrieved',
+    await getMyTicketQr(request.auth.id, request.params.ticketId as string),
+  );
 };
 
 export const submitCheckIn: RequestHandler = async (request, response) => {

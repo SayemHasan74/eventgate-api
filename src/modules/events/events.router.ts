@@ -16,9 +16,11 @@ import {
 } from './events.controller.js';
 import { createEventSchema, eventIdParamsSchema, updateEventSchema } from './events.schemas.js';
 
+import { paginationQuerySchema } from '../../shared/responses/pagination.js';
+
 const eventsRouter = Router();
 eventsRouter.use(authenticate, authorize(UserRole.ORGANIZER, UserRole.ADMIN));
-eventsRouter.get('/', readManagedEvents);
+eventsRouter.get('/', validate({ query: paginationQuerySchema }), readManagedEvents);
 eventsRouter.post('/', validate({ body: createEventSchema }), addEvent);
 eventsRouter.patch(
   '/:eventId',

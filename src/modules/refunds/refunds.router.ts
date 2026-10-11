@@ -15,6 +15,8 @@ import {
   reviewRefundSchema,
 } from './refunds.schemas.js';
 
+import { paginationQuerySchema } from '../../shared/responses/pagination.js';
+
 const attendeeRefundsRouter = Router();
 attendeeRefundsRouter.post(
   '/orders/:orderId/refund-requests',
@@ -27,11 +29,12 @@ attendeeRefundsRouter.get(
   '/refund-requests',
   authenticate,
   authorize(UserRole.ATTENDEE),
+  validate({ query: paginationQuerySchema }),
   readRefunds,
 );
 const adminRefundsRouter = Router();
 adminRefundsRouter.use(authenticate, authorize(UserRole.ADMIN));
-adminRefundsRouter.get('/refunds', readRefunds);
+adminRefundsRouter.get('/refunds', validate({ query: paginationQuerySchema }), readRefunds);
 adminRefundsRouter.patch(
   '/refunds/:refundId',
   validate({ params: refundIdParamsSchema, body: reviewRefundSchema }),

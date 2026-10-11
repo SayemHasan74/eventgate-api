@@ -19,9 +19,11 @@ import {
   ticketIdParamsSchema,
 } from './tickets.schemas.js';
 
+import { paginationQuerySchema } from '../../shared/responses/pagination.js';
+
 const ticketsRouter = Router();
 ticketsRouter.use(authenticate, authorize(UserRole.ATTENDEE));
-ticketsRouter.get('/', readMyTickets);
+ticketsRouter.get('/', validate({ query: paginationQuerySchema }), readMyTickets);
 ticketsRouter.get('/:ticketId', validate({ params: ticketIdParamsSchema }), readMyTicket);
 ticketsRouter.get('/:ticketId/qr', validate({ params: ticketIdParamsSchema }), readMyTicketQr);
 

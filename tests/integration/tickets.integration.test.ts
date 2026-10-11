@@ -114,11 +114,21 @@ if (!testDatabaseUrl) {
         .get(`/api/v1/tickets/${ticket.id}/qr`)
         .set(await bearer(other))
         .expect(404);
-      await request(app)
+      const result = await request(app)
         .get(`/api/v1/tickets/${ticket.id}/qr`)
         .set(await bearer(attendee))
-        .expect('Content-Type', /image\/svg\+xml/)
+        .expect('Content-Type', /application\/json/)
+        .expect('Cache-Control', 'private, no-store')
         .expect(200);
+      expect(result.body.data.ticketId).toBe(ticket.id);
+      expect(result.body.data.mimeType).toBe('image/png');
+      expect(result.body.data.dataUrl).toMatch(/^data:image\/png;base64,/);
+      expect(result.body.data.qrToken).toBeUndefined();
+      expect(
+        Buffer.from(result.body.data.dataUrl.split(',')[1], 'base64')
+          .subarray(0, 8)
+          .toString('hex'),
+      ).toBe('89504e470d0a1a0a');
     });
     it('allows exactly one of two simultaneous scans', async () => {
       const { organizer, event, ticket } = await fixture();

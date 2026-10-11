@@ -1,3 +1,4 @@
+import type { PaginationQuery } from '../../shared/responses/pagination.js';
 import {
   OrderStatus,
   Prisma,
@@ -291,11 +292,19 @@ export const reconcileRefund = async (
   }
 };
 
-export const listRefunds = async (actor: { id: string; role: UserRole }) => {
+export const listRefunds = async (
+  actor: { id: string; role: UserRole },
+  query: PaginationQuery,
+) => {
   const where = actor.role === UserRole.ADMIN ? {} : { requestedById: actor.id };
   const database = getPrisma();
   const [refunds, total] = await database.$transaction([
-    database.refund.findMany({ where, orderBy: { requestedAt: 'desc' }, take: 100 }),
+    database.refund.findMany({
+      where,
+      orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }],
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+    }),
     database.refund.count({ where }),
   ]);
   return { refunds, total };

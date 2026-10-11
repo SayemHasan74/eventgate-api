@@ -1,4 +1,5 @@
 import type { RequestHandler } from 'express';
+import { paginationQuerySchema, paginationMeta } from '../../shared/responses/pagination.js';
 import { sendList, sendSuccess } from '../../shared/responses/api-response.js';
 import { listRefunds, requestRefund, reviewRefund, startRefund } from './refunds.service.js';
 
@@ -10,13 +11,9 @@ export const createRefundRequest: RequestHandler = async (request, response) =>
     await requestRefund(request.auth.id, request.params.orderId as string),
   );
 export const readRefunds: RequestHandler = async (request, response) => {
-  const result = await listRefunds(request.auth);
-  sendList(response, 'Refunds retrieved', result.refunds, {
-    page: 1,
-    limit: 100,
-    total: result.total,
-    totalPages: Math.ceil(result.total / 100),
-  });
+  const query = paginationQuerySchema.parse(request.query);
+  const result = await listRefunds(request.auth, query);
+  sendList(response, 'Refunds retrieved', result.refunds, paginationMeta(query, result.total));
 };
 export const reviewRefundRequest: RequestHandler = async (request, response) =>
   sendSuccess(

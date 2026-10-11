@@ -5,6 +5,8 @@ import { invalidatePublicDiscoveryCache } from '../public-events/public-events.c
 
 import type { CreateEventInput, UpdateEventInput } from './events.schemas.js';
 
+import type { PaginationQuery } from '../../shared/responses/pagination.js';
+
 type Actor = Express.Request['auth'];
 
 const eventNotFound = (): AppError =>
@@ -38,14 +40,23 @@ export const findOwnedEvent = async (eventId: string, actor: Actor) => {
   return event;
 };
 
-export const listManagedEvents = (actor: Actor) =>
-  getPrisma().event.findMany({
-    where:
-      actor.role === UserRole.ADMIN
-        ? { deletedAt: null }
-        : { organizerId: actor.id, deletedAt: null },
-    orderBy: { createdAt: 'desc' },
-  });
+export const listManagedEvents = async (actor: Actor, query: PaginationQuery) => {
+  const database = getPrisma();
+  const where =
+    actor.role === UserRole.ADMIN
+      ? { deletedAt: null }
+      : { organizerId: actor.id, deletedAt: null };
+  const [events, total] = await database.$transaction([
+    database.event.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+    }),
+    database.event.count({ where }),
+  ]);
+  return { events, total };
+};
 
 export const createEvent = async (actorId: string, input: CreateEventInput) => {
   if (input.startAt <= new Date()) throw invalidDate('Event must start in the future');

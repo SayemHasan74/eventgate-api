@@ -1,6 +1,7 @@
 import type { RequestHandler } from 'express';
+import { paginationQuerySchema, paginationMeta } from '../../shared/responses/pagination.js';
 
-import { sendSuccess } from '../../shared/responses/api-response.js';
+import { sendList, sendSuccess } from '../../shared/responses/api-response.js';
 
 import type { CreateEventInput, UpdateEventInput } from './events.schemas.js';
 import {
@@ -13,7 +14,14 @@ import {
 } from './events.service.js';
 
 export const readManagedEvents: RequestHandler = async (request, response) => {
-  sendSuccess(response, 200, 'Organizer events retrieved', await listManagedEvents(request.auth));
+  const query = paginationQuerySchema.parse(request.query);
+  const result = await listManagedEvents(request.auth, query);
+  sendList(
+    response,
+    'Organizer events retrieved',
+    result.events,
+    paginationMeta(query, result.total),
+  );
 };
 
 export const addEvent: RequestHandler = async (request, response) => {
