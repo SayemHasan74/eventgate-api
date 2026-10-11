@@ -1,5 +1,6 @@
-import { EventStatus, Prisma, UserRole, UserStatus } from '../../generated/prisma/client.js';
+import { EventStatus, type Prisma, UserRole, UserStatus } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
+import { serializableTransaction } from '../../lib/transaction.js';
 import { AppError } from '../../shared/errors/app-error.js';
 
 import type { ProfileInput, UserListQuery } from './users.schemas.js';
@@ -107,103 +108,142 @@ export const listUsers = async (query: UserListQuery) => {
 };
 
 export const changeUserRole = async (actorId: string, userId: string, role: UserRole) =>
-  getPrisma().$transaction(
-    async (tx) => {
-      const target = await findActiveUser(tx, userId);
-      if (target.role === UserRole.ADMIN) {
+  serializableTransaction(async (tx) => {
+    const target = await findActiveUser(tx, userId);
+    if (target.role === UserRole.ADMIN) {
+      throw conflict(
+        'ADMIN_ROLE_PROTECTED',
+        'Administrator roles cannot be changed here',
+        'Administrator accounts are managed through secure seeding only.',
+      );
+    }
+    if (target.role === role) {
+      const safeUser = await tx.user.findUniqueOrThrow({
+        where: { id: target.id },
+        select: userSummarySelect,
+      });
+      return { ...safeUser, changed: false };
+    }
+
+    if (target.role === UserRole.ORGANIZER && role === UserRole.ATTENDEE) {
+      const nonterminalEventCount = await tx.event.count({
+        where: {
+          organizerId: target.id,
+          deletedAt: null,
+          status: { in: [EventStatus.DRAFT, EventStatus.PUBLISHED] },
+        },
+      });
+      if (nonterminalEventCount > 0) {
         throw conflict(
-          'ADMIN_ROLE_PROTECTED',
-          'Administrator roles cannot be changed here',
-          'Administrator accounts are managed through secure seeding only.',
+          'ORGANIZER_HAS_EVENTS',
+          'Organizer has nonterminal events',
+          'Cancel or complete the organizer’s events first.',
         );
       }
-      if (target.role === role) return { ...target, changed: false };
+    }
 
-      if (target.role === UserRole.ORGANIZER && role === UserRole.ATTENDEE) {
-        const nonterminalEventCount = await tx.event.count({
-          where: {
-            organizerId: target.id,
-            deletedAt: null,
-            status: { in: [EventStatus.DRAFT, EventStatus.PUBLISHED] },
-          },
-        });
-        if (nonterminalEventCount > 0) {
-          throw conflict(
-            'ORGANIZER_HAS_EVENTS',
-            'Organizer has nonterminal events',
-            'Cancel or complete the organizer’s events first.',
-          );
-        }
-      }
-
-      const updated = await tx.user.update({
-        where: { id: target.id },
-        data: { role },
-        select: userSummarySelect,
-      });
-      await tx.auditLog.create({
-        data: {
-          actorId,
-          action: 'USER_ROLE_CHANGED',
-          entityType: 'USER',
-          entityId: target.id,
-          metadata: { from: target.role, to: role },
-        },
-      });
-      return { ...updated, changed: true };
-    },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-  );
+    const updated = await tx.user.update({
+      where: { id: target.id },
+      data: { role },
+      select: userSummarySelect,
+    });
+    await tx.auditLog.create({
+      data: {
+        actorId,
+        action: 'USER_ROLE_CHANGED',
+        entityType: 'USER',
+        entityId: target.id,
+        metadata: { from: target.role, to: role },
+      },
+    });
+    return { ...updated, changed: true };
+  });
 
 export const changeUserStatus = async (actorId: string, userId: string, status: UserStatus) =>
-  getPrisma().$transaction(
-    async (tx) => {
-      const target = await findActiveUser(tx, userId);
-      if (target.status === status) return { ...target, changed: false };
-      if (status === UserStatus.SUSPENDED) await protectLastActiveAdmin(tx, target);
-
-      const updated = await tx.user.update({
+  serializableTransaction(async (tx) => {
+    const target = await findActiveUser(tx, userId);
+    if (target.status === status) {
+      const safeUser = await tx.user.findUniqueOrThrow({
         where: { id: target.id },
-        data: { status },
         select: userSummarySelect,
       });
-      await tx.auditLog.create({
-        data: {
-          actorId,
-          action: 'USER_STATUS_CHANGED',
-          entityType: 'USER',
-          entityId: target.id,
-          metadata: { from: target.status, to: status },
-        },
-      });
-      return { ...updated, changed: true };
-    },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-  );
+      return { ...safeUser, changed: false };
+    }
+    if (status === UserStatus.SUSPENDED) await protectLastActiveAdmin(tx, target);
+    if (actorId === userId && status !== UserStatus.ACTIVE) {
+      throw conflict(
+        'SELF_ACTION_FORBIDDEN',
+        'Cannot deactivate your own account',
+        'Ask another administrator to manage this account.',
+      );
+    }
 
-export const softDeleteUser = async (actorId: string, userId: string) =>
-  getPrisma().$transaction(
-    async (tx) => {
-      const target = await findActiveUser(tx, userId);
-      await protectLastActiveAdmin(tx, target);
-      const deletedAt = new Date();
-      await tx.user.update({
-        where: { id: target.id },
-        data: { status: UserStatus.DELETED, deletedAt },
-      });
+    const updated = await tx.user.update({
+      where: { id: target.id },
+      data: { status },
+      select: userSummarySelect,
+    });
+    if (status !== UserStatus.ACTIVE) {
       await tx.refreshSession.updateMany({
         where: { userId: target.id, revokedAt: null },
-        data: { revokedAt: deletedAt },
+        data: { revokedAt: new Date() },
       });
-      await tx.auditLog.create({
-        data: {
-          actorId,
-          action: 'USER_DELETED',
-          entityType: 'USER',
-          entityId: target.id,
-          metadata: { previousStatus: target.status },
+    }
+    await tx.auditLog.create({
+      data: {
+        actorId,
+        action: 'USER_STATUS_CHANGED',
+        entityType: 'USER',
+        entityId: target.id,
+        metadata: { from: target.status, to: status },
+      },
+    });
+    return { ...updated, changed: true };
+  });
+
+export const softDeleteUser = async (actorId: string, userId: string) =>
+  serializableTransaction(async (tx) => {
+    const target = await findActiveUser(tx, userId);
+    await protectLastActiveAdmin(tx, target);
+    if (actorId === userId) {
+      throw conflict(
+        'SELF_ACTION_FORBIDDEN',
+        'Cannot delete your own account',
+        'Ask another administrator to manage this account.',
+      );
+    }
+    if (target.role === UserRole.ORGANIZER) {
+      const eventCount = await tx.event.count({
+        where: {
+          organizerId: target.id,
+          deletedAt: null,
+          status: { in: [EventStatus.DRAFT, EventStatus.PUBLISHED] },
         },
       });
-    },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-  );
+      if (eventCount > 0) {
+        throw conflict(
+          'ORGANIZER_HAS_EVENTS',
+          'Organizer has nonterminal events',
+          'Cancel or complete the organizer’s events first.',
+        );
+      }
+    }
+    const deletedAt = new Date();
+    await tx.user.update({
+      where: { id: target.id },
+      data: { status: UserStatus.DELETED, deletedAt },
+    });
+    await tx.refreshSession.updateMany({
+      where: { userId: target.id, revokedAt: null },
+      data: { revokedAt: deletedAt },
+    });
+    await tx.auditLog.create({
+      data: {
+        actorId,
+        action: 'USER_DELETED',
+        entityType: 'USER',
+        entityId: target.id,
+        metadata: { previousStatus: target.status },
+      },
+    });
+  });

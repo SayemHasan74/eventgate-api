@@ -18,14 +18,17 @@ if (!testDatabaseUrl) {
   process.env.DATABASE_URL = testDatabaseUrl;
   process.env.JWT_ACCESS_SECRET = 'test-access-secret-that-is-at-least-thirty-two-characters';
 
-  const [{ app }, { getPrisma }, { signAccessToken }, { UserRole, UserStatus }] = await Promise.all(
-    [
-      import('../../src/app.js'),
-      import('../../src/lib/prisma.js'),
-      import('../../src/modules/auth/token.service.js'),
-      import('../../src/generated/prisma/client.js'),
-    ],
-  );
+  const [
+    { app },
+    { getPrisma },
+    { signAccessToken, createRefreshToken },
+    { UserRole, UserStatus },
+  ] = await Promise.all([
+    import('../../src/app.js'),
+    import('../../src/lib/prisma.js'),
+    import('../../src/modules/auth/token.service.js'),
+    import('../../src/generated/prisma/client.js'),
+  ]);
   const request = (await import('supertest')).default;
   const database = getPrisma();
 
@@ -121,12 +124,26 @@ if (!testDatabaseUrl) {
         .expect(409);
 
       expect(response.body.errors[0].code).toBe('ORGANIZER_HAS_EVENTS');
+      const deletion = await request(app)
+        .delete(`/api/v1/admin/users/${organizer.id}`)
+        .set(await bearer(admin))
+        .expect(409);
+      expect(deletion.body.errors[0].code).toBe('ORGANIZER_HAS_EVENTS');
     });
 
     it('invalidates an existing access token when an account is suspended', async () => {
       const admin = await createUser(UserRole.ADMIN, 'Admin');
       const attendee = await createUser(UserRole.ATTENDEE, 'Attendee');
       const attendeeHeaders = await bearer(attendee);
+      const session = createRefreshToken();
+      await database.refreshSession.create({
+        data: {
+          userId: attendee.id,
+          familyId: session.familyId,
+          tokenHash: session.hash,
+          expiresAt: session.expiresAt,
+        },
+      });
 
       const suspension = await request(app)
         .patch(`/api/v1/admin/users/${attendee.id}/status`)
@@ -142,6 +159,48 @@ if (!testDatabaseUrl) {
         }),
       ).resolves.not.toBeNull();
       expect(suspension.body.data.status).toBe(UserStatus.SUSPENDED);
+      expect(
+        await database.refreshSession.count({ where: { userId: attendee.id, revokedAt: null } }),
+      ).toBe(0);
+    });
+
+    it('never exposes a password hash when role or status is unchanged', async () => {
+      const admin = await createUser(UserRole.ADMIN, 'Admin');
+      const attendee = await createUser(UserRole.ATTENDEE, 'Attendee');
+      await database.user.update({
+        where: { id: attendee.id },
+        data: { passwordHash: 'private-password-hash' },
+      });
+      for (const [field, value] of [
+        ['role', UserRole.ATTENDEE],
+        ['status', UserStatus.ACTIVE],
+      ] as const) {
+        const response = await request(app)
+          .patch(`/api/v1/admin/users/${attendee.id}/${field}`)
+          .set(await bearer(admin))
+          .send({ [field]: value })
+          .expect(200);
+        expect(response.body.data.changed).toBe(false);
+        expect(response.body.data).not.toHaveProperty('passwordHash');
+        expect(JSON.stringify(response.body)).not.toContain('private-password-hash');
+      }
+    });
+
+    it('prevents self-suspension and self-deletion even when another admin exists', async () => {
+      const admin = await createUser(UserRole.ADMIN, 'Admin');
+      await createUser(UserRole.ADMIN, 'Other Admin');
+      const headers = await bearer(admin);
+      const suspension = await request(app)
+        .patch(`/api/v1/admin/users/${admin.id}/status`)
+        .set(headers)
+        .send({ status: UserStatus.SUSPENDED })
+        .expect(409);
+      const deletion = await request(app)
+        .delete(`/api/v1/admin/users/${admin.id}`)
+        .set(headers)
+        .expect(409);
+      expect(suspension.body.errors[0].code).toBe('SELF_ACTION_FORBIDDEN');
+      expect(deletion.body.errors[0].code).toBe('SELF_ACTION_FORBIDDEN');
     });
 
     it('protects the last active admin from suspension and soft deletion', async () => {

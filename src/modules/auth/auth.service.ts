@@ -3,6 +3,7 @@ import argon2 from 'argon2';
 import { UserRole, UserStatus } from '../../generated/prisma/client.js';
 import { env } from '../../config/env.js';
 import { getPrisma } from '../../lib/prisma.js';
+import { serializableTransaction } from '../../lib/transaction.js';
 import { AppError, isAppError } from '../../shared/errors/app-error.js';
 import type { DemoLoginInput, LoginInput, RegisterInput } from './auth.schemas.js';
 import {
@@ -173,7 +174,10 @@ export const login = async (input: LoginInput): Promise<AuthResult> => {
 };
 
 export const loginDemo = async ({ role }: DemoLoginInput): Promise<AuthResult> => {
-  if (env.DEMO_LOGIN_ENABLED !== 'true') {
+  if (
+    env.DEMO_LOGIN_ENABLED !== 'true' ||
+    (env.NODE_ENV === 'production' && env.DEMO_ENVIRONMENT !== 'true')
+  ) {
     throw new AppError({
       statusCode: 404,
       code: 'DEMO_LOGIN_DISABLED',
@@ -201,7 +205,7 @@ export const loginDemo = async ({ role }: DemoLoginInput): Promise<AuthResult> =
     where: { email },
     select: { id: true, email: true, displayName: true, role: true, status: true, deletedAt: true },
   });
-  if (!user) throw invalidCredentials();
+  if (!user || user.role !== role) throw invalidCredentials();
   assertActiveUser(user);
   return createSessionForUser(user, 'AUTH_DEMO_LOGGED_IN', { method: 'demo', role });
 };
@@ -211,11 +215,22 @@ export const createSessionForUser = async (
   action: string,
   metadata: Record<string, string>,
 ): Promise<AuthResult> => {
-  const database = getPrisma();
   const session = createRefreshToken();
   const sessionId = createSessionId();
 
-  await database.$transaction(async (transaction) => {
+  const activeUser = await serializableTransaction(async (transaction) => {
+    const currentUser = await transaction.user.findUniqueOrThrow({
+      where: { id: user.id },
+      select: {
+        id: true,
+        email: true,
+        displayName: true,
+        role: true,
+        status: true,
+        deletedAt: true,
+      },
+    });
+    assertActiveUser(currentUser);
     await transaction.refreshSession.create({
       data: {
         id: sessionId,
@@ -234,19 +249,20 @@ export const createSessionForUser = async (
         metadata,
       },
     });
+    return toPublicUser(currentUser);
   });
 
-  return createAuthResult(user, session.token);
+  return createAuthResult(activeUser, session.token);
 };
 
 export const refresh = async (refreshToken: string): Promise<AuthResult> => {
-  const database = getPrisma();
   const tokenHash = hashRefreshToken(refreshToken);
   const replacement = createRefreshToken();
   const replacementSessionId = createSessionId();
   const now = new Date();
 
-  const user = await database.$transaction(async (transaction) => {
+  type RefreshOutcome = { user: PublicUser; error?: never } | { error: AppError; user?: never };
+  const outcome = await serializableTransaction<RefreshOutcome>(async (transaction) => {
     const currentSession = await transaction.refreshSession.findUnique({
       where: { tokenHash },
       include: {
@@ -264,15 +280,17 @@ export const refresh = async (refreshToken: string): Promise<AuthResult> => {
     });
 
     if (!currentSession) {
-      throw new AppError({
-        statusCode: 401,
-        code: 'INVALID_REFRESH_TOKEN',
-        message: 'Invalid refresh token',
-        errors: [{ code: 'INVALID_REFRESH_TOKEN', message: 'Refresh token is invalid.' }],
-      });
+      return {
+        error: new AppError({
+          statusCode: 401,
+          code: 'INVALID_REFRESH_TOKEN',
+          message: 'Invalid refresh token',
+          errors: [{ code: 'INVALID_REFRESH_TOKEN', message: 'Refresh token is invalid.' }],
+        }),
+      };
     }
 
-    if (currentSession.revokedAt) {
+    const revokeFamily = async (action: string) => {
       await transaction.refreshSession.updateMany({
         where: { familyId: currentSession.familyId, revokedAt: null },
         data: { revokedAt: now },
@@ -280,34 +298,63 @@ export const refresh = async (refreshToken: string): Promise<AuthResult> => {
       await transaction.auditLog.create({
         data: {
           actorId: currentSession.userId,
-          action: 'AUTH_REFRESH_REUSE_DETECTED',
+          action,
           entityType: 'REFRESH_SESSION',
           entityId: currentSession.id,
           metadata: { familyId: currentSession.familyId },
         },
       });
-      throw new AppError({
-        statusCode: 401,
-        code: 'REFRESH_TOKEN_REUSED',
-        message: 'Refresh token reuse detected',
-        errors: [{ code: 'REFRESH_TOKEN_REUSED', message: 'Sign in again to continue.' }],
-      });
+    };
+
+    if (currentSession.revokedAt) {
+      await revokeFamily('AUTH_REFRESH_REUSE_DETECTED');
+      return {
+        error: new AppError({
+          statusCode: 401,
+          code: 'REFRESH_TOKEN_REUSED',
+          message: 'Refresh token reuse detected',
+          errors: [{ code: 'REFRESH_TOKEN_REUSED', message: 'Sign in again to continue.' }],
+        }),
+      };
     }
 
-    if (currentSession.expiresAt <= now) {
-      await transaction.refreshSession.updateMany({
-        where: { familyId: currentSession.familyId, revokedAt: null },
-        data: { revokedAt: now },
-      });
-      throw new AppError({
-        statusCode: 401,
-        code: 'REFRESH_TOKEN_EXPIRED',
-        message: 'Refresh token has expired',
-        errors: [{ code: 'REFRESH_TOKEN_EXPIRED', message: 'Sign in again to continue.' }],
-      });
+    // The original family row is retained, so no schema migration is needed.
+    // This also caps previously rolling families at their original seven days.
+    const firstSession = await transaction.refreshSession.findFirstOrThrow({
+      where: { familyId: currentSession.familyId },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { createdAt: true, expiresAt: true },
+    });
+    const absoluteExpiry = new Date(
+      Math.min(
+        currentSession.expiresAt.getTime(),
+        firstSession.expiresAt.getTime(),
+        firstSession.createdAt.getTime() + 7 * 24 * 60 * 60 * 1000,
+      ),
+    );
+    if (absoluteExpiry <= now) {
+      await revokeFamily('AUTH_REFRESH_EXPIRED');
+      return {
+        error: new AppError({
+          statusCode: 401,
+          code: 'REFRESH_TOKEN_EXPIRED',
+          message: 'Refresh token has expired',
+          errors: [{ code: 'REFRESH_TOKEN_EXPIRED', message: 'Sign in again to continue.' }],
+        }),
+      };
     }
 
-    assertActiveUser(currentSession.user);
+    if (currentSession.user.status !== UserStatus.ACTIVE || currentSession.user.deletedAt) {
+      await revokeFamily('AUTH_REFRESH_ACCOUNT_INACTIVE');
+      return {
+        error: new AppError({
+          statusCode: 403,
+          code: 'ACCOUNT_INACTIVE',
+          message: 'Account is not active',
+          errors: [{ code: 'ACCOUNT_INACTIVE', message: 'This account cannot sign in.' }],
+        }),
+      };
+    }
 
     const rotation = await transaction.refreshSession.updateMany({
       where: { id: currentSession.id, revokedAt: null, expiresAt: { gt: now } },
@@ -315,16 +362,15 @@ export const refresh = async (refreshToken: string): Promise<AuthResult> => {
     });
 
     if (rotation.count !== 1) {
-      await transaction.refreshSession.updateMany({
-        where: { familyId: currentSession.familyId, revokedAt: null },
-        data: { revokedAt: now },
-      });
-      throw new AppError({
-        statusCode: 401,
-        code: 'REFRESH_TOKEN_REUSED',
-        message: 'Refresh token reuse detected',
-        errors: [{ code: 'REFRESH_TOKEN_REUSED', message: 'Sign in again to continue.' }],
-      });
+      await revokeFamily('AUTH_REFRESH_REUSE_DETECTED');
+      return {
+        error: new AppError({
+          statusCode: 401,
+          code: 'REFRESH_TOKEN_REUSED',
+          message: 'Refresh token reuse detected',
+          errors: [{ code: 'REFRESH_TOKEN_REUSED', message: 'Sign in again to continue.' }],
+        }),
+      };
     }
 
     await transaction.refreshSession.create({
@@ -333,7 +379,7 @@ export const refresh = async (refreshToken: string): Promise<AuthResult> => {
         userId: currentSession.userId,
         familyId: currentSession.familyId,
         tokenHash: replacement.hash,
-        expiresAt: replacement.expiresAt,
+        expiresAt: absoluteExpiry,
       },
     });
     await transaction.auditLog.create({
@@ -346,27 +392,29 @@ export const refresh = async (refreshToken: string): Promise<AuthResult> => {
       },
     });
 
-    return currentSession.user;
+    return { user: toPublicUser(currentSession.user) };
   });
 
-  return createAuthResult(user, replacement.token);
+  // Throw only after security writes have committed.
+  if (outcome.error) throw outcome.error;
+  return createAuthResult(outcome.user, replacement.token);
 };
 
 export const logout = async (refreshToken: string): Promise<void> => {
-  const database = getPrisma();
   const tokenHash = hashRefreshToken(refreshToken);
   const now = new Date();
 
-  await database.$transaction(async (transaction) => {
+  await serializableTransaction(async (transaction) => {
     const session = await transaction.refreshSession.findUnique({ where: { tokenHash } });
-    if (!session || session.revokedAt) {
+    if (!session) {
       return;
     }
 
-    await transaction.refreshSession.update({
-      where: { id: session.id },
+    const revoked = await transaction.refreshSession.updateMany({
+      where: { familyId: session.familyId, revokedAt: null },
       data: { revokedAt: now },
     });
+    if (revoked.count === 0) return;
     await transaction.auditLog.create({
       data: {
         actorId: session.userId,
