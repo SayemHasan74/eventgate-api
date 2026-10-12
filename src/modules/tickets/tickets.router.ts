@@ -42,6 +42,10 @@ ticketsRouter.get(
 );
 
 const checkInRouter = Router({ mergeParams: true });
+checkInRouter.use((_request, response, next) => {
+  response.setHeader('Cache-Control', 'private, no-store');
+  next();
+});
 checkInRouter.use(authenticate, authorize(UserRole.ORGANIZER, UserRole.ADMIN));
 checkInRouter.post(
   '/',

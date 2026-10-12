@@ -1,6 +1,6 @@
 import { toDataURL } from 'qrcode';
 
-import { EventStatus, type Prisma, TicketStatus, UserRole } from '../../generated/prisma/client.js';
+import { EventStatus, Prisma, TicketStatus, UserRole } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { serializableTransaction } from '../../lib/transaction.js';
 import { lockOrderGraph } from '../../lib/financial-locks.js';
@@ -244,70 +244,57 @@ const assertEventCheckInAccess = async (actor: { id: string; role: UserRole }, e
   return event;
 };
 
-const assertCheckInWindow = (event: { status: EventStatus; startAt: Date; endAt: Date }) => {
-  if (!checkInWindow(event).isOpen) {
-    throw conflict(
-      'CHECK_IN_NOT_OPEN',
-      'Check-in is not open',
-      'Check-in opens two hours before a published event and closes when it ends.',
-    );
-  }
-};
-
 export const checkInTicket = async (
   actor: { id: string; role: UserRole },
   eventId: string,
   input: CheckInInput,
-) => {
-  const checkedInAt = new Date();
-  return serializableTransaction(async (tx) => {
-    const identity = await tx.ticket.findFirst({
-      where: { eventId, qrToken: input.qrToken },
-      select: { orderId: true },
-    });
-    if (!identity) throw notFound();
-    await lockOrderGraph(tx, identity.orderId);
+) =>
+  serializableTransaction(async (tx) => {
+    // Lock only the requested event before inspecting a token. A foreign token
+    // never causes us to read or return its attendee/order details.
+    await tx.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`,
+    );
     const event = await tx.event.findUnique({ where: { id: eventId } });
-    if (!event) throw notFound();
-    if (actor.role !== UserRole.ADMIN && event.organizerId !== actor.id)
+    if (!event || (actor.role !== UserRole.ADMIN && event.organizerId !== actor.id))
       throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Event not found' });
-    assertCheckInWindow(event);
-    const admissionTicket = await tx.ticket.findFirst({
-      where: { eventId, qrToken: input.qrToken },
-      select: ticketSelect,
+    const identity = await tx.ticket.findUnique({
+      where: { qrToken: input.qrToken },
+      select: { eventId: true, orderId: true },
     });
-    if (!admissionTicket || effectiveAdmissionState(admissionTicket) !== 'ACTIVE')
-      throw conflict(
-        'TICKET_ADMISSION_BLOCKED',
-        'Ticket cannot be admitted.',
-        'The pass is invalid, already used, or blocked by its booking/refund state.',
-      );
+    if (!identity) return { resultCode: 'INVALID_TICKET' as const };
+    if (identity.eventId !== eventId) return { resultCode: 'WRONG_EVENT' as const };
+    await lockOrderGraph(tx, identity.orderId);
+    const ticket = await tx.ticket.findFirst({
+      where: { eventId, qrToken: input.qrToken },
+      select: { ...ticketSelect, attendee: { select: { displayName: true } } },
+    });
+    if (!ticket) return { resultCode: 'INVALID_TICKET' as const };
+    const now = new Date();
+    const staffTicket = {
+      id: ticket.id,
+      sequence: ticket.sequence,
+      checkedInAt: ticket.checkedInAt,
+      ticketTier: { name: ticket.ticketTier.name },
+      attendee: { displayName: ticket.attendee.displayName },
+    };
+    if (ticket.status === TicketStatus.CHECKED_IN)
+      return { resultCode: 'ALREADY_CHECKED_IN' as const, ticket: staffTicket };
+    if (!checkInWindow({ ...event }, now).isOpen) return { resultCode: 'WINDOW_CLOSED' as const };
+    const admissionState = effectiveAdmissionState(ticket, now);
+    if (admissionState !== 'ACTIVE')
+      return { resultCode: 'ADMISSION_BLOCKED' as const, admissionState };
     const updated = await tx.ticket.updateMany({
       where: {
+        id: ticket.id,
         eventId,
-        qrToken: input.qrToken,
         status: TicketStatus.ACTIVE,
-        event: { status: EventStatus.PUBLISHED },
+        event: { status: EventStatus.PUBLISHED, deletedAt: null },
       },
-      data: { status: TicketStatus.CHECKED_IN, checkedInAt, checkedInById: actor.id },
+      data: { status: TicketStatus.CHECKED_IN, checkedInAt: now, checkedInById: actor.id },
     });
-    if (updated.count !== 1) {
-      const ticket = await tx.ticket.findFirst({
-        where: { eventId, qrToken: input.qrToken },
-        select: { status: true },
-      });
-      if (!ticket) throw notFound();
-      throw conflict(
-        'TICKET_NOT_CHECK_IN_ELIGIBLE',
-        'Ticket cannot be checked in',
-        `Ticket status is ${ticket.status}.`,
-      );
-    }
-    const ticket = await tx.ticket.findFirst({
-      where: { eventId, qrToken: input.qrToken, status: TicketStatus.CHECKED_IN },
-      select: ticketSelect,
-    });
-    if (!ticket) throw new Error('Checked-in ticket could not be read.');
+    if (updated.count !== 1)
+      return { resultCode: 'ADMISSION_BLOCKED' as const, admissionState: 'VOIDED' };
     await tx.auditLog.create({
       data: {
         actorId: actor.id,
@@ -317,9 +304,13 @@ export const checkInTicket = async (
         metadata: { eventId },
       },
     });
-    return ticketRead(ticket);
+    return {
+      resultCode: 'ACCEPTED' as const,
+      id: ticket.id,
+      status: 'CHECKED_IN' as const,
+      ticket: { ...staffTicket, checkedInAt: now },
+    };
   });
-};
 
 export const listCheckInHistory = async (
   actor: { id: string; role: UserRole },
@@ -327,16 +318,30 @@ export const listCheckInHistory = async (
   query: CheckInHistoryQuery,
 ) => {
   await assertEventCheckInAccess(actor, eventId);
-  const where = { eventId, status: TicketStatus.CHECKED_IN };
+  const where: Prisma.TicketWhereInput = {
+    eventId,
+    status: TicketStatus.CHECKED_IN,
+    ...(query.search
+      ? {
+          OR: [
+            { attendee: { displayName: { contains: query.search, mode: 'insensitive' } } },
+            { ticketTier: { name: { contains: query.search, mode: 'insensitive' } } },
+            ...(/^\d+$/.test(query.search) && Number(query.search) <= 2147483647
+              ? [{ sequence: Number(query.search) }]
+              : []),
+          ],
+        }
+      : {}),
+  };
   const database = getPrisma();
-  const [tickets, total] = await database.$transaction([
+  const [tickets, total, checkedInCount] = await database.$transaction([
     database.ticket.findMany({
       where,
       select: {
         id: true,
         sequence: true,
         checkedInAt: true,
-        attendee: { select: { displayName: true, email: true } },
+        attendee: { select: { displayName: true } },
         ticketTier: { select: { name: true } },
         checkedInBy: { select: { displayName: true } },
       },
@@ -345,6 +350,7 @@ export const listCheckInHistory = async (
       take: query.limit,
     }),
     database.ticket.count({ where }),
+    database.ticket.count({ where: { eventId, status: TicketStatus.CHECKED_IN } }),
   ]);
-  return { tickets, page: query.page, limit: query.limit, total };
+  return { tickets, page: query.page, limit: query.limit, total, checkedInCount };
 };

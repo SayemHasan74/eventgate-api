@@ -53,7 +53,7 @@ export const submitCheckIn: RequestHandler = async (request, response) => {
   sendSuccess(
     response,
     200,
-    'Ticket checked in',
+    'Check-in evaluated',
     await checkInTicket(request.auth, request.params.eventId as string, request.body),
   );
 };
@@ -64,10 +64,16 @@ export const readCheckInHistory: RequestHandler = async (request, response) => {
     request.params.eventId as string,
     request.query as unknown as CheckInHistoryQuery,
   );
-  sendList(response, 'Check-in history retrieved', result.tickets, {
-    page: result.page,
-    limit: result.limit,
-    total: result.total,
-    totalPages: Math.ceil(result.total / result.limit),
-  });
+  sendList(
+    response,
+    'Check-in history retrieved',
+    result.tickets,
+    {
+      page: result.page,
+      limit: result.limit,
+      total: result.total,
+      totalPages: Math.ceil(result.total / result.limit),
+    },
+    { checkedInCount: result.checkedInCount },
+  );
 };

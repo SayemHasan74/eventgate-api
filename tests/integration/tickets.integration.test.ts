@@ -144,7 +144,11 @@ if (!testDatabaseUrl) {
           .set(headers)
           .send({ qrToken: ticket.qrToken }),
       ]);
-      expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+      expect(responses.map((response) => response.status)).toEqual([200, 200]);
+      expect(responses.map((response) => response.body.data.resultCode).sort()).toEqual([
+        'ACCEPTED',
+        'ALREADY_CHECKED_IN',
+      ]);
       await expect(database.ticket.findUnique({ where: { id: ticket.id } })).resolves.toMatchObject(
         { status: TicketStatus.CHECKED_IN },
       );
