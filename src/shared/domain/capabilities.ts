@@ -68,10 +68,10 @@ export const tierCapabilities = (
   const saleState =
     event.status !== 'PUBLISHED' || event.deletedAt || tier.deletedAt
       ? 'UNAVAILABLE'
-      : tier.salesPaused
-        ? 'PAUSED'
-        : now >= event.startAt || now >= tier.salesEndAt
-          ? 'CLOSED'
+      : now >= event.startAt || now >= tier.salesEndAt
+        ? 'CLOSED'
+        : tier.salesPaused
+          ? 'PAUSED'
           : now < tier.salesStartAt
             ? 'UPCOMING'
             : availableQuantity === 0

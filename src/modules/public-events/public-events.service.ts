@@ -20,18 +20,30 @@ const publicTierSelect = {
 } satisfies Prisma.TicketTierSelect;
 
 const cacheKey = (name: string, value: unknown): string =>
-  `safe-v3:${name}:${Buffer.from(JSON.stringify(value)).toString('base64url')}`;
+  `safe-v4:${name}:${Buffer.from(JSON.stringify(value)).toString('base64url')}`;
 
-const addAvailability = <
-  T extends { ticketTiers: { capacity: number; reservedQuantity: number; soldQuantity: number }[] },
->(
-  event: T,
-) => ({
-  ...event,
-  ticketTiers: event.ticketTiers.map(({ capacity, reservedQuantity, soldQuantity, ...tier }) => ({
-    ...tier,
-    capacity,
-    availableQuantity: capacity - reservedQuantity - soldQuantity,
+const publicProjection = (event: NonNullable<Awaited<ReturnType<typeof findPublicEvent>>>) => ({
+  id: event.id,
+  title: event.title,
+  slug: event.slug,
+  description: event.description,
+  category: event.category,
+  venue: event.venue,
+  city: event.city,
+  address: event.address,
+  startAt: event.startAt,
+  endAt: event.endAt,
+  imageUrl: event.imageUrl,
+  organizer: { displayName: event.organizer.displayName },
+  ticketTiers: event.ticketTiers.map((tier) => ({
+    id: tier.id,
+    name: tier.name,
+    pricePaisa: tier.pricePaisa,
+    capacity: tier.capacity,
+    availableQuantity: Math.max(0, tier.capacity - tier.reservedQuantity - tier.soldQuantity),
+    salesStartAt: tier.salesStartAt,
+    salesEndAt: tier.salesEndAt,
+    salesPaused: tier.salesPaused,
   })),
 });
 
@@ -97,7 +109,7 @@ const queryEvents = async (query: DiscoveryQuery) => {
     database.event.count({ where }),
   ]);
   return {
-    events: events.map(addAvailability),
+    events: events.map(publicProjection),
     meta: {
       page: query.page,
       limit: query.limit,
@@ -109,7 +121,7 @@ const queryEvents = async (query: DiscoveryQuery) => {
 
 export const getPublicEvent = async (slug: string) => {
   const key = cacheKey('detail', slug);
-  const cached = await readDiscoveryCache<Awaited<ReturnType<typeof findPublicEvent>>>(key);
+  const cached = await readDiscoveryCache<ReturnType<typeof publicProjection>>(key);
   if (cached) return cached;
   const event = await findPublicEvent(slug);
   if (!event) {
@@ -120,7 +132,7 @@ export const getPublicEvent = async (slug: string) => {
       errors: [{ code: 'NOT_FOUND', message: 'Event not found.' }],
     });
   }
-  const result = addAvailability(event);
+  const result = publicProjection(event);
   await writeDiscoveryCache(key, result);
   return result;
 };
@@ -164,9 +176,20 @@ export const getPublicAvailability = async (slug: string) => {
     eventId: event.id,
     status: event.status,
     serverTime,
-    ticketTiers: event.ticketTiers.map((tier) => ({
-      ...tier,
-      ...tierCapabilities(event, tier, false, serverTime),
-    })),
+    ticketTiers: event.ticketTiers.map((tier) => {
+      const { availableQuantity, saleState } = tierCapabilities(event, tier, false, serverTime);
+      return {
+        id: tier.id,
+        name: tier.name,
+        pricePaisa: tier.pricePaisa,
+        capacity: tier.capacity,
+        availableQuantity,
+        salesStartAt: tier.salesStartAt,
+        salesEndAt: tier.salesEndAt,
+        salesPaused: tier.salesPaused,
+        saleState,
+        canPurchase: saleState === 'OPEN',
+      };
+    }),
   };
 };
