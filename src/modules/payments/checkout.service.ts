@@ -34,7 +34,7 @@ const resultFor = (attempt: PaymentAttempt, payable: boolean) => {
   return {
     statusCode: 202,
     data: {
-      status: 'PROCESSING' as const,
+      status: attempt.status === 'UNKNOWN' ? ('UNKNOWN' as const) : ('PROCESSING' as const),
       paymentAttemptId: attempt.id,
       merchantTransactionId: attempt.merchantTransactionId,
       paymentStatus: attempt.status,
@@ -58,17 +58,22 @@ export async function initiateCheckout(
         throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Order not found' });
       const order = await tx.order.findFirst({
         where: { id: orderId, attendeeId },
-        include: { attendee: true, event: true },
+        include: { attendee: true, event: true, ticketTier: true },
       });
       if (!order)
         throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Order not found' });
       const payable =
         order.status === 'PENDING_PAYMENT' &&
+        !order.financialReviewRequired &&
         !order.reservationReleasedAt &&
         order.reservationExpiresAt > new Date() &&
         order.event.status === 'PUBLISHED' &&
         !order.event.deletedAt &&
-        order.event.startAt > new Date();
+        order.event.startAt > new Date() &&
+        !order.ticketTier.deletedAt &&
+        !order.ticketTier.salesPaused &&
+        order.ticketTier.salesStartAt <= new Date() &&
+        order.ticketTier.salesEndAt > new Date();
       const previous = await tx.idempotencyRecord.findUnique({
         where: { scope_key: { scope, key } },
       });
@@ -88,11 +93,6 @@ export async function initiateCheckout(
         });
         return { kind: 'existing' as const, result: resultFor(attempt, payable) };
       }
-      if (!payable)
-        throw conflict(
-          'ORDER_NOT_PAYABLE',
-          'Only an active unexpired reservation can start checkout.',
-        );
       const active = await tx.paymentAttempt.findFirst({
         where: { orderId, status: { in: ['INITIATING', 'PENDING', 'UNKNOWN'] } },
       });
@@ -109,6 +109,17 @@ export async function initiateCheckout(
         });
         return { kind: 'existing' as const, result: resultFor(active, payable) };
       }
+      const latest = await tx.paymentAttempt.findFirst({
+        where: { orderId },
+        orderBy: { sequence: 'desc' },
+      });
+      if (latest && !['FAILED', 'CANCELLED'].includes(latest.status))
+        return { kind: 'existing' as const, result: resultFor(latest, false) };
+      if (!payable)
+        throw conflict(
+          'ORDER_NOT_PAYABLE',
+          'Only an active reservation with eligible ticket sales can start checkout.',
+        );
       const customer = order.attendee;
       if (
         !customer.phone ||
@@ -185,13 +196,21 @@ export async function initiateCheckout(
       throw conflict('PAYMENT_REQUIRES_INVESTIGATION', 'The checkout needs investigation.');
     const attempt = await getPrisma().paymentAttempt.findUniqueOrThrow({
       where: { id: previous.resourceId },
-      include: { order: { include: { event: true } } },
+      include: { order: { include: { event: true, ticketTier: true } } },
     });
     return resultFor(
       attempt,
       attempt.order.status === 'PENDING_PAYMENT' &&
+        !attempt.order.financialReviewRequired &&
         attempt.order.reservationExpiresAt > new Date() &&
-        attempt.order.event.status === 'PUBLISHED',
+        !attempt.order.reservationReleasedAt &&
+        attempt.order.event.status === 'PUBLISHED' &&
+        !attempt.order.event.deletedAt &&
+        attempt.order.event.startAt > new Date() &&
+        !attempt.order.ticketTier.deletedAt &&
+        !attempt.order.ticketTier.salesPaused &&
+        attempt.order.ticketTier.salesStartAt <= new Date() &&
+        attempt.order.ticketTier.salesEndAt > new Date(),
     );
   }
   if (prepared.kind === 'existing') return prepared.result;
@@ -217,14 +236,21 @@ export async function initiateCheckout(
       });
       const current = await tx.paymentAttempt.findUniqueOrThrow({
         where: { id: attempt.id },
-        include: { order: { include: { event: true } } },
+        include: { order: { include: { event: true, ticketTier: true } } },
       });
       const result = resultFor(
         current,
         current.order.status === 'PENDING_PAYMENT' &&
+          !current.order.financialReviewRequired &&
           !current.order.reservationReleasedAt &&
           current.order.reservationExpiresAt > new Date() &&
-          current.order.event.status === 'PUBLISHED',
+          current.order.event.status === 'PUBLISHED' &&
+          !current.order.event.deletedAt &&
+          current.order.event.startAt > new Date() &&
+          !current.order.ticketTier.deletedAt &&
+          !current.order.ticketTier.salesPaused &&
+          current.order.ticketTier.salesStartAt <= new Date() &&
+          current.order.ticketTier.salesEndAt > new Date(),
       );
       await tx.idempotencyRecord.updateMany({
         where: { scope, resourceId: attempt.id },

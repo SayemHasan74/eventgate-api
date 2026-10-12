@@ -266,6 +266,9 @@ export const getOrder = async (attendeeId: string, orderId: string) => {
       financialReviewRequired: true,
       fulfilledPaymentAttemptId: true,
       event: { select: eventSummarySelect },
+      ticketTier: {
+        select: { deletedAt: true, salesPaused: true, salesStartAt: true, salesEndAt: true },
+      },
       tickets: { select: { id: true, status: true } },
       paymentAttempts: {
         select: paymentSummarySelect,
@@ -279,7 +282,7 @@ export const getOrder = async (attendeeId: string, orderId: string) => {
   });
   if (!order) throw notFound();
   const serverTime = new Date();
-  const { fulfilledPaymentAttempt, ...safeOrder } = order;
+  const { fulfilledPaymentAttempt, ticketTier, ...safeOrder } = order;
   const eligibility = refundEligibility({ ...safeOrder, fulfilledPaymentAttempt }, serverTime);
   const pending = order.status === 'PENDING_PAYMENT' && !order.reservationReleasedAt;
   return {
@@ -288,10 +291,15 @@ export const getOrder = async (attendeeId: string, orderId: string) => {
     ticketIds: order.tickets.map((ticket) => ticket.id),
     payable:
       pending &&
+      !order.financialReviewRequired &&
       order.reservationExpiresAt > serverTime &&
       order.event.status === 'PUBLISHED' &&
       !order.event.deletedAt &&
-      order.event.startAt > serverTime,
+      order.event.startAt > serverTime &&
+      !ticketTier.deletedAt &&
+      !ticketTier.salesPaused &&
+      ticketTier.salesStartAt <= serverTime &&
+      ticketTier.salesEndAt > serverTime,
     cancellable: pending,
     serverTime,
   };
