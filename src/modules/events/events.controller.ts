@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express';
-import { paginationQuerySchema, paginationMeta } from '../../shared/responses/pagination.js';
+import { paginationMeta } from '../../shared/responses/pagination.js';
+import { managedEventQuerySchema } from './events.schemas.js';
 
 import { sendList, sendSuccess } from '../../shared/responses/api-response.js';
 
@@ -8,21 +9,30 @@ import {
   cancelEvent,
   createEvent,
   listManagedEvents,
+  getManagedEvent,
   publishEvent,
   softDeleteEvent,
   updateEvent,
 } from './events.service.js';
 
 export const readManagedEvents: RequestHandler = async (request, response) => {
-  const query = paginationQuerySchema.parse(request.query);
+  const query = managedEventQuerySchema.parse(request.query);
   const result = await listManagedEvents(request.auth, query);
   sendList(
     response,
     'Organizer events retrieved',
     result.events,
     paginationMeta(query, result.total),
+    result.summary,
   );
 };
+export const readManagedEvent: RequestHandler = async (request, response) =>
+  sendSuccess(
+    response,
+    200,
+    'Event retrieved',
+    await getManagedEvent(request.auth, request.params.eventId as string),
+  );
 
 export const addEvent: RequestHandler = async (request, response) => {
   sendSuccess(

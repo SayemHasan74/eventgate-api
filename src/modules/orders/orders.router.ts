@@ -7,15 +7,20 @@ import { validate } from '../../middleware/validate.js';
 
 import { addOrder, cancelManagedOrder, readOrder, readOrders } from './orders.controller.js';
 import { createOrderSchema, orderIdParamsSchema, orderListQuerySchema } from './orders.schemas.js';
+import { emptyQuerySchema, emptyCommandSchema } from '../../shared/responses/read-contracts.js';
 
 const ordersRouter = Router();
 ordersRouter.use(authenticate, authorize(UserRole.ATTENDEE));
 ordersRouter.post('/', validate({ body: createOrderSchema }), addOrder);
 ordersRouter.get('/', validate({ query: orderListQuerySchema }), readOrders);
-ordersRouter.get('/:orderId', validate({ params: orderIdParamsSchema }), readOrder);
+ordersRouter.get(
+  '/:orderId',
+  validate({ params: orderIdParamsSchema, query: emptyQuerySchema }),
+  readOrder,
+);
 ordersRouter.post(
   '/:orderId/cancel',
-  validate({ params: orderIdParamsSchema }),
+  validate({ params: orderIdParamsSchema, query: emptyQuerySchema, body: emptyCommandSchema }),
   cancelManagedOrder,
 );
 

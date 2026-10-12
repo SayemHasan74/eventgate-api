@@ -1,10 +1,13 @@
-import { EventStatus, type Prisma } from '../../generated/prisma/client.js';
+import { EventStatus, Prisma } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
 
 import { findOwnedEvent } from '../events/events.service.js';
 import { invalidatePublicDiscoveryCache } from '../public-events/public-events.cache.js';
 import type { CreateTicketTierInput, UpdateTicketTierInput } from './ticket-tiers.schemas.js';
+import { tierCapabilities, eventCapabilities } from '../../shared/domain/capabilities.js';
+import type { PaginationQuery } from '../../shared/responses/pagination.js';
+import { serializableTransaction } from '../../lib/transaction.js';
 
 type Actor = Express.Request['auth'];
 
@@ -45,6 +48,29 @@ const assertDraftEvent = (status: EventStatus) => {
   }
 };
 
+export const listManagedTiers = async (actor: Actor, eventId: string, query: PaginationQuery) => {
+  const event = await findOwnedEvent(eventId, actor);
+  const where = { eventId, deletedAt: null };
+  const [tiers, total] = await getPrisma().$transaction([
+    getPrisma().ticketTier.findMany({
+      where,
+      include: { _count: { select: { orders: true } } },
+      orderBy: [{ pricePaisa: 'asc' }, { id: 'asc' }],
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+    }),
+    getPrisma().ticketTier.count({ where }),
+  ]);
+  return {
+    tiers: tiers.map((tier) => ({
+      ...tier,
+      ...tierCapabilities(event, tier, tier._count.orders > 0),
+      serverTime: new Date(),
+    })),
+    total,
+  };
+};
+
 const assertSalesWindow = (
   salesStartAt: Date,
   salesEndAt: Date,
@@ -66,9 +92,15 @@ export const createTicketTier = async (
   input: CreateTicketTierInput,
 ) => {
   const event = await findOwnedEvent(eventId, actor);
-  assertDraftEvent(event.status);
+  if (!eventCapabilities(event, 0, 0).canManageTiers) assertDraftEvent(event.status);
   assertSalesWindow(input.salesStartAt, input.salesEndAt, event.startAt, true);
   const tier = await getPrisma().$transaction(async (tx) => {
+    await tx.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`,
+    );
+    const current = await findOwnedEvent(eventId, actor, tx);
+    assertDraftEvent(current.status);
+    assertSalesWindow(input.salesStartAt, input.salesEndAt, current.startAt, true);
     const tier = await tx.ticketTier.create({ data: { ...input, eventId: event.id } });
     await tx.auditLog.create({
       data: {
@@ -95,9 +127,10 @@ export const updateTicketTier = async (
   const tier = await findOwnedTier(event.id, tierId);
   const database = getPrisma();
   const hasOrderHistory = (await database.order.count({ where: { ticketTierId: tier.id } })) > 0;
+  const capabilities = tierCapabilities(event, tier, hasOrderHistory);
 
   if (
-    hasOrderHistory &&
+    capabilities.restrictionCodes.includes('TIER_HISTORY_LOCKED') &&
     (input.pricePaisa !== undefined || input.name !== undefined || input.salesStartAt !== undefined)
   ) {
     throw conflict(
@@ -129,7 +162,38 @@ export const updateTicketTier = async (
   ) as Prisma.TicketTierUpdateInput;
   if (Object.keys(data).length === 0) return tier;
 
-  const updated = await database.$transaction(async (tx) => {
+  const updated = await serializableTransaction(async (tx) => {
+    await tx.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`,
+    );
+    const currentEvent = await findOwnedEvent(eventId, actor, tx);
+    const currentTier = await tx.ticketTier.findFirst({
+      where: { id: tierId, eventId, deletedAt: null },
+    });
+    if (!currentTier) throw tierNotFound();
+    const history = await tx.order.count({ where: { ticketTierId: tierId } });
+    const currentCapabilities = tierCapabilities(currentEvent, currentTier, history > 0);
+    if (
+      !currentCapabilities.canEdit ||
+      Object.keys(data).some((field) => !currentCapabilities.editableFields.includes(field))
+    )
+      throw conflict(
+        'TIER_HISTORY_LOCKED',
+        'Tier fields are locked',
+        'Reload the tier capabilities.',
+      );
+    if (input.capacity !== undefined && input.capacity < currentCapabilities.minimumCapacity)
+      throw conflict(
+        'CAPACITY_TOO_LOW',
+        'Capacity is too low',
+        'Capacity cannot invalidate existing inventory.',
+      );
+    assertSalesWindow(
+      input.salesStartAt ?? currentTier.salesStartAt,
+      input.salesEndAt ?? currentTier.salesEndAt,
+      currentEvent.startAt,
+      input.salesStartAt !== undefined,
+    );
     const updated = await tx.ticketTier.update({ where: { id: tier.id }, data });
     await tx.auditLog.create({
       data: {
@@ -151,8 +215,12 @@ export const softDeleteTicketTier = async (actor: Actor, eventId: string, tierId
   assertDraftEvent(event.status);
   const tier = await findOwnedTier(event.id, tierId);
   await getPrisma().$transaction(async (tx) => {
+    await tx.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`,
+    );
+    const currentEvent = await findOwnedEvent(eventId, actor, tx);
     const orderCount = await tx.order.count({ where: { ticketTierId: tier.id } });
-    if (orderCount > 0) {
+    if (!tierCapabilities(currentEvent, tier, orderCount > 0).canDelete) {
       throw conflict(
         'TIER_HAS_ORDERS',
         'Ticket tier has order history',

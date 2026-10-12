@@ -15,6 +15,9 @@ import { auditLogQuerySchema } from './reports.schemas.js';
 import { paginationQuerySchema } from '../../shared/responses/pagination.js';
 import { maintenanceStatus } from '../../jobs/maintenance.service.js';
 import { sendSuccess } from '../../shared/responses/api-response.js';
+import { z } from 'zod';
+import { getPrisma } from '../../lib/prisma.js';
+import { AppError } from '../../shared/errors/app-error.js';
 const organizerReportsRouter = Router({ mergeParams: true });
 organizerReportsRouter.use(authenticate, authorize(UserRole.ORGANIZER, UserRole.ADMIN));
 organizerReportsRouter.get(
@@ -36,4 +39,28 @@ adminReportsRouter.get('/maintenance', async (_request, response) => {
   sendSuccess(response, 200, 'Maintenance status retrieved', await maintenanceStatus());
 });
 adminReportsRouter.get('/audit-logs', validate({ query: auditLogQuerySchema }), readAuditLogs);
+adminReportsRouter.get(
+  '/audit-logs/:logId',
+  validate({
+    params: z.object({ logId: z.string().uuid() }).strict(),
+    query: z.object({}).strict(),
+  }),
+  async (request, response) => {
+    const log = await getPrisma().auditLog.findUnique({
+      where: { id: request.params.logId as string },
+      select: {
+        id: true,
+        actorId: true,
+        action: true,
+        entityType: true,
+        entityId: true,
+        createdAt: true,
+        actor: { select: { id: true, displayName: true } },
+      },
+    });
+    if (!log)
+      throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Audit entry not found.' });
+    sendSuccess(response, 200, 'Audit entry retrieved', log);
+  },
+);
 export { adminReportsRouter, organizerReportsRouter };

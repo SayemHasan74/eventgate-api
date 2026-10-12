@@ -97,7 +97,7 @@ export const listUsers = async (query: UserListQuery) => {
     database.user.findMany({
       where,
       select: userSummarySelect,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       skip,
       take: query.limit,
     }),

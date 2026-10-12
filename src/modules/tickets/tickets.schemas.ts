@@ -1,4 +1,15 @@
 import { z } from 'zod';
+import { TicketStatus } from '../../generated/prisma/client.js';
+import { listFields } from '../../shared/responses/read-contracts.js';
+export const ticketListQuerySchema = z
+  .object({
+    ...listFields,
+    status: z.nativeEnum(TicketStatus).optional(),
+    period: z.enum(['upcoming', 'past', 'all']).default('all'),
+    orderId: z.string().uuid().optional(),
+  })
+  .strict();
+export type TicketListQuery = z.infer<typeof ticketListQuerySchema>;
 
 export const ticketIdParamsSchema = z.object({ ticketId: z.string().uuid() }).strict();
 export const eventIdParamsSchema = z.object({ eventId: z.string().uuid() }).strict();

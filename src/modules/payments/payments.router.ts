@@ -15,12 +15,33 @@ import {
 import { paymentOrderIdParamsSchema } from './payments.schemas.js';
 
 import { z } from 'zod';
+import { listPayments, paymentListQuerySchema } from '../reports/workspace-reads.service.js';
+import { sendList } from '../../shared/responses/api-response.js';
+import { paginationMeta } from '../../shared/responses/pagination.js';
+import { emptyQuerySchema, emptyCommandSchema } from '../../shared/responses/read-contracts.js';
 
 const paymentsRouter = Router();
 paymentsRouter.use(authenticate, authorize(UserRole.ATTENDEE));
 paymentsRouter.get(
+  '/orders/:orderId/attempts',
+  validate({ params: paymentOrderIdParamsSchema, query: paymentListQuerySchema }),
+  async (request, response) => {
+    const query = paymentListQuerySchema.parse(request.query);
+    const result = await listPayments(query, request.auth.id, request.params.orderId as string);
+    sendList(
+      response,
+      'Payment attempts retrieved',
+      result.payments,
+      paginationMeta(query, result.total),
+    );
+  },
+);
+paymentsRouter.get(
   '/attempts/:attemptId',
-  validate({ params: z.object({ attemptId: z.string().uuid() }).strict() }),
+  validate({
+    params: z.object({ attemptId: z.string().uuid() }).strict(),
+    query: emptyQuerySchema,
+  }),
   readPaymentAttempt,
 );
 const requireIdempotencyKey: RequestHandler = (request, _response, next) => {
@@ -43,7 +64,11 @@ const requireIdempotencyKey: RequestHandler = (request, _response, next) => {
 paymentsRouter.post(
   '/orders/:orderId/checkout',
   requireIdempotencyKey,
-  validate({ params: paymentOrderIdParamsSchema }),
+  validate({
+    params: paymentOrderIdParamsSchema,
+    query: emptyQuerySchema,
+    body: emptyCommandSchema,
+  }),
   beginCheckout,
 );
 

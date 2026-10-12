@@ -5,29 +5,9 @@ import { sendSuccess } from '../../shared/responses/api-response.js';
 
 import { initiateCheckout, processSslcommerzCallback } from './payments.service.js';
 
-import { getPrisma } from '../../lib/prisma.js';
-import { AppError } from '../../shared/errors/app-error.js';
+import { getPayment } from '../reports/workspace-reads.service.js';
 export const readPaymentAttempt: RequestHandler = async (request, response) => {
-  const attempt = await getPrisma().paymentAttempt.findFirst({
-    where: { id: request.params.attemptId as string, order: { attendeeId: request.auth.id } },
-    select: {
-      id: true,
-      orderId: true,
-      merchantTransactionId: true,
-      amountPaisa: true,
-      currency: true,
-      status: true,
-      initiatedAt: true,
-      completedAt: true,
-    },
-  });
-  if (!attempt)
-    throw new AppError({
-      statusCode: 404,
-      code: 'NOT_FOUND',
-      message: 'Payment attempt not found',
-      errors: [{ code: 'NOT_FOUND', message: 'Payment attempt not found.' }],
-    });
+  const attempt = await getPayment(request.params.attemptId as string, request.auth.id);
   response.setHeader('Cache-Control', 'private, no-store');
   sendSuccess(response, 200, 'Payment attempt retrieved', attempt);
 };

@@ -4,6 +4,7 @@ import { UserRole } from '../../generated/prisma/client.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { authorize } from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
+import { emptyQuerySchema } from '../../shared/responses/read-contracts.js';
 
 import {
   readCheckInHistory,
@@ -17,9 +18,8 @@ import {
   checkInSchema,
   eventIdParamsSchema,
   ticketIdParamsSchema,
+  ticketListQuerySchema,
 } from './tickets.schemas.js';
-
-import { paginationQuerySchema } from '../../shared/responses/pagination.js';
 
 const ticketsRouter = Router();
 ticketsRouter.use((_request, response, next) => {
@@ -27,9 +27,17 @@ ticketsRouter.use((_request, response, next) => {
   next();
 });
 ticketsRouter.use(authenticate, authorize(UserRole.ATTENDEE));
-ticketsRouter.get('/', validate({ query: paginationQuerySchema }), readMyTickets);
-ticketsRouter.get('/:ticketId', validate({ params: ticketIdParamsSchema }), readMyTicket);
-ticketsRouter.get('/:ticketId/qr', validate({ params: ticketIdParamsSchema }), readMyTicketQr);
+ticketsRouter.get('/', validate({ query: ticketListQuerySchema }), readMyTickets);
+ticketsRouter.get(
+  '/:ticketId',
+  validate({ params: ticketIdParamsSchema, query: emptyQuerySchema }),
+  readMyTicket,
+);
+ticketsRouter.get(
+  '/:ticketId/qr',
+  validate({ params: ticketIdParamsSchema, query: emptyQuerySchema }),
+  readMyTicketQr,
+);
 
 const checkInRouter = Router({ mergeParams: true });
 checkInRouter.use(authenticate, authorize(UserRole.ORGANIZER, UserRole.ADMIN));

@@ -5,22 +5,32 @@ import { authenticate } from '../../middleware/authenticate.js';
 import { authorize } from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
 import { ticketTiersRouter } from '../ticket-tiers/ticket-tiers.router.js';
+import { emptyQuerySchema, emptyCommandSchema } from '../../shared/responses/read-contracts.js';
 
 import {
   addEvent,
   editEvent,
   publishManagedEvent,
   readManagedEvents,
+  readManagedEvent,
   removeEvent,
   requestEventCancellation,
 } from './events.controller.js';
-import { createEventSchema, eventIdParamsSchema, updateEventSchema } from './events.schemas.js';
-
-import { paginationQuerySchema } from '../../shared/responses/pagination.js';
+import {
+  createEventSchema,
+  eventIdParamsSchema,
+  updateEventSchema,
+  managedEventQuerySchema,
+} from './events.schemas.js';
 
 const eventsRouter = Router();
 eventsRouter.use(authenticate, authorize(UserRole.ORGANIZER, UserRole.ADMIN));
-eventsRouter.get('/', validate({ query: paginationQuerySchema }), readManagedEvents);
+eventsRouter.get('/', validate({ query: managedEventQuerySchema }), readManagedEvents);
+eventsRouter.get(
+  '/:eventId',
+  validate({ params: eventIdParamsSchema, query: emptyQuerySchema }),
+  readManagedEvent,
+);
 eventsRouter.post('/', validate({ body: createEventSchema }), addEvent);
 eventsRouter.patch(
   '/:eventId',
@@ -30,12 +40,12 @@ eventsRouter.patch(
 eventsRouter.delete('/:eventId', validate({ params: eventIdParamsSchema }), removeEvent);
 eventsRouter.post(
   '/:eventId/publish',
-  validate({ params: eventIdParamsSchema }),
+  validate({ params: eventIdParamsSchema, query: emptyQuerySchema, body: emptyCommandSchema }),
   publishManagedEvent,
 );
 eventsRouter.post(
   '/:eventId/cancel',
-  validate({ params: eventIdParamsSchema }),
+  validate({ params: eventIdParamsSchema, query: emptyQuerySchema, body: emptyCommandSchema }),
   requestEventCancellation,
 );
 eventsRouter.use(

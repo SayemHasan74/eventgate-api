@@ -59,8 +59,17 @@ export const sendList = <T>(
   message: string,
   data: T[],
   meta: PaginationMeta,
+  summary?: Record<string, number>,
 ): Response<ListBody<T>> =>
-  response.status(200).json({ success: true, message, data: safeDiagnostics(data), meta });
+  response
+    .status(200)
+    .json({
+      success: true,
+      message,
+      data: safeDiagnostics(data),
+      meta: { page: meta.page, limit: meta.limit, total: meta.total, totalPages: meta.totalPages },
+      ...(summary ? { summary } : {}),
+    });
 
 export const sendError = (
   response: Response,
@@ -68,10 +77,8 @@ export const sendError = (
   message: string,
   errors: ErrorDetail[] = [],
 ): Response<ErrorBody> =>
-  response
-    .status(status)
-    .json({
-      success: false,
-      message: redactMessage(message),
-      errors: errors.map((error) => ({ ...error, message: redactMessage(error.message) })),
-    });
+  response.status(status).json({
+    success: false,
+    message: redactMessage(message),
+    errors: errors.map((error) => ({ ...error, message: redactMessage(error.message) })),
+  });

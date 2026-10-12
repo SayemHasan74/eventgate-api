@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express';
-import { paginationQuerySchema, paginationMeta } from '../../shared/responses/pagination.js';
+import { paginationMeta } from '../../shared/responses/pagination.js';
+import { ticketListQuerySchema } from './tickets.schemas.js';
 
 import { sendList, sendSuccess } from '../../shared/responses/api-response.js';
 
@@ -13,7 +14,7 @@ import {
 import type { CheckInHistoryQuery } from './tickets.schemas.js';
 
 export const readMyTickets: RequestHandler = async (request, response) => {
-  const query = paginationQuerySchema.parse(request.query);
+  const query = ticketListQuerySchema.parse(request.query);
   const result = await listMyTickets(request.auth.id, query);
   sendList(response, 'Tickets retrieved', result.tickets, paginationMeta(query, result.total));
 };

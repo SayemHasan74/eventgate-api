@@ -23,6 +23,7 @@ import { sendSuccess } from './shared/responses/api-response.js';
 import { corsOptions } from './shared/security/cors.js';
 import { apiRateLimiter } from './shared/security/rate-limit.js';
 import { openapi } from './docs/openapi.js';
+import { adminReadsRouter, overviewRouter } from './modules/reports/workspace-reads.router.js';
 
 const app = express();
 
@@ -54,6 +55,11 @@ app.use(
 );
 app.use(express.json({ limit: '100kb' }));
 app.use('/api/v1', apiRateLimiter);
+app.use('/api/v1', (request, response, next) => {
+  if (!request.path.startsWith('/events') && !request.path.startsWith('/health'))
+    response.setHeader('Cache-Control', 'private, no-store');
+  next();
+});
 
 app.get('/', (_request, response) => {
   sendSuccess(response, 200, 'EventGate API is running', {
@@ -72,8 +78,10 @@ app.use('/api/v1', attendeeRefundsRouter);
 app.use('/api/v1/tickets', ticketsRouter);
 app.use('/api/v1/payments/sslcommerz', sslcommerzCallbacksRouter);
 app.use('/api/v1/payments', paymentsRouter);
+app.use('/api/v1', overviewRouter);
 app.use('/api/v1/users', usersRouter);
 app.use('/api/v1/admin', adminRouter);
+app.use('/api/v1/admin', adminReadsRouter);
 app.use('/api/v1/admin', adminRefundsRouter);
 app.use('/api/v1/admin/reports', adminReportsRouter);
 app.use('/api/v1/organizer/events/:eventId/check-ins', checkInRouter);

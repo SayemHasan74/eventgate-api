@@ -3,9 +3,11 @@ import { UserRole } from '../../generated/prisma/client.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { authorize } from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
+import { emptyQuerySchema, emptyCommandSchema } from '../../shared/responses/read-contracts.js';
 import {
   createRefundRequest,
   readRefunds,
+  readRefund,
   retryRefund,
   reviewRefundRequest,
 } from './refunds.controller.js';
@@ -14,9 +16,8 @@ import {
   refundIdParamsSchema,
   reviewRefundSchema,
   requestRefundSchema,
+  refundListQuerySchema,
 } from './refunds.schemas.js';
-
-import { paginationQuerySchema } from '../../shared/responses/pagination.js';
 
 const attendeeRefundsRouter = Router();
 attendeeRefundsRouter.post(
@@ -30,12 +31,24 @@ attendeeRefundsRouter.get(
   '/refund-requests',
   authenticate,
   authorize(UserRole.ATTENDEE),
-  validate({ query: paginationQuerySchema }),
+  validate({ query: refundListQuerySchema }),
   readRefunds,
+);
+attendeeRefundsRouter.get(
+  '/refund-requests/:refundId',
+  authenticate,
+  authorize(UserRole.ATTENDEE),
+  validate({ params: refundIdParamsSchema, query: emptyQuerySchema }),
+  readRefund,
 );
 const adminRefundsRouter = Router();
 adminRefundsRouter.use(authenticate, authorize(UserRole.ADMIN));
-adminRefundsRouter.get('/refunds', validate({ query: paginationQuerySchema }), readRefunds);
+adminRefundsRouter.get('/refunds', validate({ query: refundListQuerySchema }), readRefunds);
+adminRefundsRouter.get(
+  '/refunds/:refundId',
+  validate({ params: refundIdParamsSchema, query: emptyQuerySchema }),
+  readRefund,
+);
 adminRefundsRouter.patch(
   '/refunds/:refundId',
   validate({ params: refundIdParamsSchema, body: reviewRefundSchema }),
@@ -43,7 +56,7 @@ adminRefundsRouter.patch(
 );
 adminRefundsRouter.post(
   '/refunds/:refundId/retry',
-  validate({ params: refundIdParamsSchema }),
+  validate({ params: refundIdParamsSchema, query: emptyQuerySchema, body: emptyCommandSchema }),
   retryRefund,
 );
 export { adminRefundsRouter, attendeeRefundsRouter };

@@ -4,6 +4,8 @@ import { AppError } from '../../shared/errors/app-error.js';
 
 import { readDiscoveryCache, writeDiscoveryCache } from './public-events.cache.js';
 import type { DiscoveryQuery } from './public-events.schemas.js';
+import { publicEventSelect } from '../../shared/responses/read-contracts.js';
+import { tierCapabilities } from '../../shared/domain/capabilities.js';
 
 const publicTierSelect = {
   id: true,
@@ -17,7 +19,7 @@ const publicTierSelect = {
 } satisfies Prisma.TicketTierSelect;
 
 const cacheKey = (name: string, value: unknown): string =>
-  `${name}:${Buffer.from(JSON.stringify(value)).toString('base64url')}`;
+  `safe-v2:${name}:${Buffer.from(JSON.stringify(value)).toString('base64url')}`;
 
 const addAvailability = <
   T extends { ticketTiers: { capacity: number; reservedQuantity: number; soldQuantity: number }[] },
@@ -51,7 +53,7 @@ const queryEvents = async (query: DiscoveryQuery) => {
       ? {
           startAt: {
             ...(query.startAfter ? { gte: query.startAfter } : {}),
-            ...(query.startBefore ? { lte: query.startBefore } : {}),
+            ...(query.startBefore ? { lt: query.startBefore } : {}),
           },
         }
       : {}),
@@ -79,10 +81,17 @@ const queryEvents = async (query: DiscoveryQuery) => {
   const [events, total] = await database.$transaction([
     database.event.findMany({
       where,
-      orderBy,
+      orderBy: [orderBy, { id: 'asc' }],
       skip,
       take: query.limit,
-      include: { ticketTiers: { where: { deletedAt: null }, select: publicTierSelect } },
+      select: {
+        ...publicEventSelect,
+        ticketTiers: {
+          where: { deletedAt: null },
+          select: publicTierSelect,
+          orderBy: [{ pricePaisa: 'asc' }, { id: 'asc' }],
+        },
+      },
     }),
     database.event.count({ where }),
   ]);
@@ -118,11 +127,45 @@ export const getPublicEvent = async (slug: string) => {
 const findPublicEvent = (slug: string) =>
   getPrisma().event.findFirst({
     where: { slug, status: EventStatus.PUBLISHED, deletedAt: null },
-    include: {
+    select: {
+      ...publicEventSelect,
       ticketTiers: {
         where: { deletedAt: null },
         select: publicTierSelect,
-        orderBy: { pricePaisa: 'asc' },
+        orderBy: [{ pricePaisa: 'asc' }, { id: 'asc' }],
       },
     },
   });
+
+export const getEventFacets = async () => {
+  const key = 'safe-v2:facets';
+  const cached = await readDiscoveryCache<{ categories: string[]; cities: string[] }>(key);
+  if (cached) return cached;
+  const where = { status: EventStatus.PUBLISHED, deletedAt: null };
+  const [categories, cities] = await Promise.all([
+    getPrisma().event.groupBy({ by: ['category'], where, orderBy: { category: 'asc' } }),
+    getPrisma().event.groupBy({ by: ['city'], where, orderBy: { city: 'asc' } }),
+  ]);
+  const result = {
+    categories: categories.map((row) => row.category),
+    cities: cities.map((row) => row.city),
+  };
+  await writeDiscoveryCache(key, result);
+  return result;
+};
+
+export const getPublicAvailability = async (slug: string) => {
+  const event = await findPublicEvent(slug);
+  if (!event)
+    throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Event not found.' });
+  const serverTime = new Date();
+  return {
+    eventId: event.id,
+    status: event.status,
+    serverTime,
+    ticketTiers: event.ticketTiers.map((tier) => ({
+      ...tier,
+      ...tierCapabilities(event, tier, false, serverTime),
+    })),
+  };
+};

@@ -15,10 +15,10 @@ const eventAccess = async (actor: { id: string; role: UserRole }, eventId: strin
     });
   if (actor.role !== UserRole.ADMIN && event.organizerId !== actor.id)
     throw new AppError({
-      statusCode: 403,
-      code: 'FORBIDDEN',
-      message: 'Event access denied',
-      errors: [{ code: 'FORBIDDEN', message: 'You do not own this event.' }],
+      statusCode: 404,
+      code: 'NOT_FOUND',
+      message: 'Event not found',
+      errors: [{ code: 'NOT_FOUND', message: 'Event not found.' }],
     });
   return event;
 };
@@ -155,6 +155,16 @@ export const auditLogs = async (query: AuditLogQuery) => {
   const where = {
     ...(query.action ? { action: query.action } : {}),
     ...(query.entityType ? { entityType: query.entityType } : {}),
+    ...(query.actorId ? { actorId: query.actorId } : {}),
+    ...(query.entityId ? { entityId: query.entityId } : {}),
+    ...(query.startAfter || query.startBefore
+      ? {
+          createdAt: {
+            ...(query.startAfter ? { gte: query.startAfter } : {}),
+            ...(query.startBefore ? { lt: query.startBefore } : {}),
+          },
+        }
+      : {}),
   };
   const database = getPrisma();
   const [logs, total] = await database.$transaction([
@@ -168,7 +178,7 @@ export const auditLogs = async (query: AuditLogQuery) => {
         createdAt: true,
         actor: { select: { id: true, displayName: true, email: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       skip: (query.page - 1) * query.limit,
       take: query.limit,
     }),

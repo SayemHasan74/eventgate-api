@@ -8,6 +8,13 @@ import { lockOrderGraph } from '../../lib/financial-locks.js';
 import { isSerializationConflict } from '../../lib/transaction.js';
 
 import type { CreateOrderInput, OrderListQuery } from './orders.schemas.js';
+import {
+  eventSummarySelect,
+  paymentSummarySelect,
+  refundSummarySelect,
+  dateRange,
+} from '../../shared/responses/read-contracts.js';
+import { refundEligibility } from '../../shared/domain/capabilities.js';
 
 const reservationLifetimeMilliseconds = 15 * 60 * 1000;
 const createOrderScope = (attendeeId: string) => `order:create:${attendeeId}`;
@@ -218,6 +225,15 @@ export const listOrders = async (attendeeId: string, query: OrderListQuery) => {
   const where: Prisma.OrderWhereInput = {
     attendeeId,
     ...(query.status ? { status: query.status } : {}),
+    ...(query.search
+      ? {
+          OR: [
+            { eventNameSnapshot: { contains: query.search, mode: 'insensitive' } },
+            { ticketTierNameSnapshot: { contains: query.search, mode: 'insensitive' } },
+          ],
+        }
+      : {}),
+    ...(query.startAfter || query.startBefore ? { createdAt: dateRange(query) } : {}),
   };
   const skip = (query.page - 1) * query.limit;
   const database = getPrisma();
@@ -225,7 +241,7 @@ export const listOrders = async (attendeeId: string, query: OrderListQuery) => {
     database.order.findMany({
       where,
       select: orderSelect,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       skip,
       take: query.limit,
     }),
@@ -234,8 +250,46 @@ export const listOrders = async (attendeeId: string, query: OrderListQuery) => {
   return { orders, page: query.page, limit: query.limit, total };
 };
 
-export const getOrder = (attendeeId: string, orderId: string) =>
-  getOrderForAttendee(attendeeId, orderId);
+export const getOrder = async (attendeeId: string, orderId: string) => {
+  const order = await getPrisma().order.findFirst({
+    where: { id: orderId, attendeeId },
+    select: {
+      ...orderSelect,
+      paidAt: true,
+      refundedAt: true,
+      financialReviewRequired: true,
+      fulfilledPaymentAttemptId: true,
+      event: { select: eventSummarySelect },
+      tickets: { select: { id: true, status: true } },
+      paymentAttempts: {
+        select: paymentSummarySelect,
+        orderBy: [{ sequence: 'desc' }, { id: 'desc' }],
+      },
+      fulfilledPaymentAttempt: {
+        select: { status: true, providerTransactionId: true, replayOfAttemptId: true },
+      },
+      refunds: { select: refundSummarySelect, orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }] },
+    },
+  });
+  if (!order) throw notFound();
+  const serverTime = new Date();
+  const { fulfilledPaymentAttempt, ...safeOrder } = order;
+  const eligibility = refundEligibility({ ...safeOrder, fulfilledPaymentAttempt }, serverTime);
+  const pending = order.status === 'PENDING_PAYMENT' && !order.reservationReleasedAt;
+  return {
+    ...safeOrder,
+    refundEligibility: eligibility,
+    ticketIds: order.tickets.map((ticket) => ticket.id),
+    payable:
+      pending &&
+      order.reservationExpiresAt > serverTime &&
+      order.event.status === 'PUBLISHED' &&
+      !order.event.deletedAt &&
+      order.event.startAt > serverTime,
+    cancellable: pending,
+    serverTime,
+  };
+};
 
 export const cancelOrder = async (attendeeId: string, orderId: string) => {
   await withSerializableRetry(() =>

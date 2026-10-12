@@ -1,4 +1,3 @@
-import type { PaginationQuery } from '../../shared/responses/pagination.js';
 import { type UserRole, type Prisma } from '../../generated/prisma/client.js';
 import { AppError } from '../../shared/errors/app-error.js';
 import {
@@ -12,6 +11,12 @@ import { lockOrderGraph } from '../../lib/financial-locks.js';
 import { invalidatePublicDiscoveryCache } from '../public-events/public-events.cache.js';
 import { financialConflict, liveRefundStates } from './capture-refund.js';
 import type { ReviewRefundInput } from './refunds.schemas.js';
+import type { RefundListQuery } from './refunds.schemas.js';
+import {
+  refundEligibility,
+  type RefundEligibilityOrder,
+} from '../../shared/domain/capabilities.js';
+import { refundSummarySelect } from '../../shared/responses/read-contracts.js';
 
 async function lockedRefund(tx: Prisma.TransactionClient, refundId: string) {
   const identity = await tx.refund.findUnique({
@@ -26,27 +31,12 @@ async function lockedRefund(tx: Prisma.TransactionClient, refundId: string) {
     include: { order: { include: { event: true, tickets: true } }, paymentAttempt: true },
   });
 }
-function assertEligible(order: {
-  status: string;
-  financialReviewRequired: boolean;
-  fulfilledPaymentAttemptId: string | null;
-  event: { status: string; startAt: Date };
-  tickets: { status: string }[];
-}) {
-  if (order.financialReviewRequired || !order.fulfilledPaymentAttemptId)
+function assertEligible(order: RefundEligibilityOrder) {
+  const eligibility = refundEligibility(order);
+  if (!eligibility.eligible)
     throw financialConflict(
-      'PAYMENT_REQUIRES_INVESTIGATION',
-      'The original fulfilled capture must be confirmed before refunding.',
-    );
-  if (
-    order.status !== 'PAID' ||
-    order.event.status !== 'PUBLISHED' ||
-    order.event.startAt.getTime() - Date.now() < 86400000 ||
-    order.tickets.some((t) => t.status !== 'ACTIVE')
-  )
-    throw financialConflict(
-      'REFUND_NOT_ELIGIBLE',
-      'Paid bookings need unused passes and at least 24 hours before the event.',
+      eligibility.reasons[0]!,
+      'This booking is not eligible for an attendee refund.',
     );
 }
 
@@ -55,7 +45,7 @@ export async function requestRefund(attendeeId: string, orderId: string, userMes
     await lockOrderGraph(tx, orderId);
     const order = await tx.order.findFirst({
       where: { id: orderId, attendeeId },
-      include: { event: true, tickets: true, fulfilledPaymentAttempt: true },
+      include: { event: true, tickets: true, fulfilledPaymentAttempt: true, refunds: true },
     });
     if (!order)
       throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Order not found.' });
@@ -438,13 +428,24 @@ export async function reconcileRefund(
   }
 }
 
-export async function listRefunds(actor: { id: string; role: UserRole }, query: PaginationQuery) {
-  const where = actor.role === 'ADMIN' ? {} : { order: { attendeeId: actor.id } };
+export async function listRefunds(actor: { id: string; role: UserRole }, query: RefundListQuery) {
+  const where: Prisma.RefundWhereInput = {
+    ...(actor.role === 'ADMIN' ? {} : { order: { attendeeId: actor.id } }),
+    ...(query.status ? { status: query.status } : {}),
+    ...(query.search
+      ? {
+          order: {
+            ...(actor.role === 'ADMIN' ? {} : { attendeeId: actor.id }),
+            eventNameSnapshot: { contains: query.search, mode: 'insensitive' },
+          },
+        }
+      : {}),
+  };
   const database = getPrisma();
   const [refunds, total] = await database.$transaction([
     database.refund.findMany({
       where,
-      include: { activities: { orderBy: { createdAt: 'asc' } } },
+      select: refundSummarySelect,
       orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }],
       skip: (query.page - 1) * query.limit,
       take: query.limit,
@@ -452,4 +453,17 @@ export async function listRefunds(actor: { id: string; role: UserRole }, query: 
     database.refund.count({ where }),
   ]);
   return { refunds, total };
+}
+
+export async function getRefund(actor: { id: string; role: UserRole }, refundId: string) {
+  const refund = await getPrisma().refund.findFirst({
+    where: { id: refundId, ...(actor.role === 'ADMIN' ? {} : { order: { attendeeId: actor.id } }) },
+    select: {
+      ...refundSummarySelect,
+      order: { select: { id: true, eventNameSnapshot: true, status: true } },
+    },
+  });
+  if (!refund)
+    throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Refund not found.' });
+  return { ...refund, serverTime: new Date() };
 }
