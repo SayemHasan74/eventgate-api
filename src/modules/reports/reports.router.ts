@@ -10,9 +10,16 @@ import {
   readEventStats,
   readOperations,
   readPlatformStats,
+  readEventSales,
+  readEventInventory,
+  readEventAttendance,
+  exportEventOrders,
 } from './reports.controller.js';
-import { auditLogQuerySchema } from './reports.schemas.js';
-import { paginationQuerySchema } from '../../shared/responses/pagination.js';
+import {
+  auditLogQuerySchema,
+  eventReportQuerySchema,
+  eventReportOrdersQuerySchema,
+} from './reports.schemas.js';
 import { maintenanceStatus } from '../../jobs/maintenance.service.js';
 import { sendSuccess } from '../../shared/responses/api-response.js';
 import { z } from 'zod';
@@ -20,15 +27,39 @@ import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
 const organizerReportsRouter = Router({ mergeParams: true });
 organizerReportsRouter.use(authenticate, authorize(UserRole.ORGANIZER, UserRole.ADMIN));
+organizerReportsRouter.use((_request, response, next) => {
+  response.setHeader('Cache-Control', 'private, no-store');
+  next();
+});
 organizerReportsRouter.get(
   '/orders',
-  validate({ params: eventIdParamsSchema, query: paginationQuerySchema }),
+  validate({ params: eventIdParamsSchema, query: eventReportOrdersQuerySchema }),
   readEventOrders,
 );
 organizerReportsRouter.get(
   '/statistics',
-  validate({ params: eventIdParamsSchema }),
+  validate({ params: eventIdParamsSchema, query: eventReportQuerySchema }),
   readEventStats,
+);
+organizerReportsRouter.get(
+  '/sales',
+  validate({ params: eventIdParamsSchema, query: eventReportQuerySchema }),
+  readEventSales,
+);
+organizerReportsRouter.get(
+  '/inventory',
+  validate({ params: eventIdParamsSchema, query: eventReportQuerySchema }),
+  readEventInventory,
+);
+organizerReportsRouter.get(
+  '/attendance',
+  validate({ params: eventIdParamsSchema, query: eventReportQuerySchema }),
+  readEventAttendance,
+);
+organizerReportsRouter.get(
+  '/orders/export',
+  validate({ params: eventIdParamsSchema, query: eventReportOrdersQuerySchema }),
+  exportEventOrders,
 );
 const adminReportsRouter = Router();
 adminReportsRouter.use(authenticate, authorize(UserRole.ADMIN));

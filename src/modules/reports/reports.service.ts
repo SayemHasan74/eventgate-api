@@ -1,80 +1,19 @@
-import type { PaginationQuery } from '../../shared/responses/pagination.js';
-import { OrderStatus, UserRole } from '../../generated/prisma/client.js';
+import type { UserRole } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
-import { AppError } from '../../shared/errors/app-error.js';
-import type { AuditLogQuery } from './reports.schemas.js';
+import type { AuditLogQuery, EventReportQuery } from './reports.schemas.js';
+import { eventSales, eventInventory, eventAttendance } from './event-report.service.js';
 
-const eventAccess = async (actor: { id: string; role: UserRole }, eventId: string) => {
-  const event = await getPrisma().event.findUnique({ where: { id: eventId } });
-  if (!event)
-    throw new AppError({
-      statusCode: 404,
-      code: 'NOT_FOUND',
-      message: 'Event not found',
-      errors: [{ code: 'NOT_FOUND', message: 'Event not found.' }],
-    });
-  if (actor.role !== UserRole.ADMIN && event.organizerId !== actor.id)
-    throw new AppError({
-      statusCode: 404,
-      code: 'NOT_FOUND',
-      message: 'Event not found',
-      errors: [{ code: 'NOT_FOUND', message: 'Event not found.' }],
-    });
-  return event;
-};
-
-export const eventOrders = async (
+export const eventStatistics = async (
   actor: { id: string; role: UserRole },
   eventId: string,
-  query: PaginationQuery,
+  query: EventReportQuery = {},
 ) => {
-  await eventAccess(actor, eventId);
-  const database = getPrisma();
-  const [orders, total] = await database.$transaction([
-    database.order.findMany({
-      where: { eventId },
-      select: {
-        id: true,
-        quantity: true,
-        totalAmountPaisaSnapshot: true,
-        currency: true,
-        status: true,
-        createdAt: true,
-        attendee: { select: { displayName: true, email: true } },
-        ticketTier: { select: { name: true } },
-      },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      skip: (query.page - 1) * query.limit,
-      take: query.limit,
-    }),
-    database.order.count({ where: { eventId } }),
+  const [sales, inventory, attendance] = await Promise.all([
+    eventSales(actor, eventId, query),
+    eventInventory(actor, eventId, query),
+    eventAttendance(actor, eventId, query),
   ]);
-  return { orders, total };
-};
-
-export const eventStatistics = async (actor: { id: string; role: UserRole }, eventId: string) => {
-  await eventAccess(actor, eventId);
-  const [orders, tiers, checkedIn] = await Promise.all([
-    getPrisma().order.groupBy({
-      by: ['status'],
-      where: { eventId },
-      _count: { _all: true },
-      _sum: { totalAmountPaisaSnapshot: true },
-    }),
-    getPrisma().ticketTier.findMany({
-      where: { eventId, deletedAt: null },
-      select: { id: true, name: true, capacity: true, soldQuantity: true, reservedQuantity: true },
-    }),
-    getPrisma().ticket.count({ where: { eventId, checkedInAt: { not: null } } }),
-  ]);
-  const paid = orders.find((row) => row.status === OrderStatus.PAID);
-  return {
-    orders,
-    tiers,
-    paidRevenuePaisa: paid?._sum.totalAmountPaisaSnapshot ?? 0,
-    paidOrderCount: paid?._count._all ?? 0,
-    checkedIn,
-  };
+  return { ...sales, ...attendance, tiers: inventory.tiers, serverTime: new Date() };
 };
 
 export const platformStatistics = async () => {
