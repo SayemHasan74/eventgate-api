@@ -16,10 +16,11 @@ const publicTierSelect = {
   soldQuantity: true,
   salesStartAt: true,
   salesEndAt: true,
+  salesPaused: true,
 } satisfies Prisma.TicketTierSelect;
 
 const cacheKey = (name: string, value: unknown): string =>
-  `safe-v2:${name}:${Buffer.from(JSON.stringify(value)).toString('base64url')}`;
+  `safe-v3:${name}:${Buffer.from(JSON.stringify(value)).toString('base64url')}`;
 
 const addAvailability = <
   T extends { ticketTiers: { capacity: number; reservedQuantity: number; soldQuantity: number }[] },

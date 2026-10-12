@@ -172,6 +172,7 @@ export const fulfillValidatedPayment = async (
           WHERE tier."id" = ${order.ticketTierId}
             AND event."id" = tier."eventId" AND event."status" = 'PUBLISHED'
             AND event."startAt" > ${now} AND tier."deletedAt" IS NULL
+            AND NOT tier."salesPaused"
             AND tier."salesStartAt" <= ${now} AND tier."salesEndAt" > ${now}
             AND tier."soldQuantity" + tier."reservedQuantity" + ${order.quantity} <= tier."capacity"
         `)

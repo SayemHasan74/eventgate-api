@@ -9,9 +9,10 @@ import type { CreateEventInput, UpdateEventInput } from './events.schemas.js';
 import type { ManagedEventQuery } from './events.schemas.js';
 import { eventCapabilities } from '../../shared/domain/capabilities.js';
 import { dateRange } from '../../shared/responses/read-contracts.js';
+import { publicationReadiness } from '../../shared/domain/publication-readiness.js';
 
 type Actor = Express.Request['auth'];
-const currentOrganizer = async (tx: Prisma.TransactionClient, id: string) => {
+export const currentOrganizer = async (tx: Prisma.TransactionClient, id: string) => {
   await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "User" WHERE "id" = ${id}::uuid FOR SHARE`);
   const user = await tx.user.findUnique({
     where: { id },
@@ -104,10 +105,15 @@ export const getManagedEvent = async (actor: Actor, eventId: string, includeDele
     include: {
       organizer: { select: { id: true, displayName: true } },
       _count: { select: { orders: true, ticketTiers: { where: { deletedAt: null } } } },
+      ticketTiers: { where: { deletedAt: null }, orderBy: [{ pricePaisa: 'asc' }, { id: 'asc' }] },
     },
   });
   if (!event) throw eventNotFound();
   const capabilities = eventCapabilities(event, event._count.ticketTiers, event._count.orders);
+  const { ticketTiers, ...details } = event;
+  const readiness = publicationReadiness(event, ticketTiers);
+  capabilities.canPublish = readiness.ready;
+  capabilities.setupChecks.hasActiveTier = readiness.tiers.some((tier) => tier.eligible);
   const [cancellationJob, refundCounts, paidOrders, activeTickets, pendingOrders] =
     await Promise.all([
       event.status === 'CANCELLED'
@@ -128,8 +134,9 @@ export const getManagedEvent = async (actor: Actor, eventId: string, includeDele
       getPrisma().order.count({ where: { eventId, status: 'PENDING_PAYMENT' } }),
     ]);
   return {
-    ...event,
+    ...details,
     capabilities,
+    publicationReadiness: readiness,
     setupChecks: capabilities.setupChecks,
     checkInWindow: capabilities.checkInWindow,
     cancellationImpact: { paidOrders, activeTickets, pendingOrders },
@@ -210,6 +217,23 @@ export const updateEvent = async (actor: Actor, eventId: string, input: UpdateEv
       (current.status === 'DRAFT' && currentStart <= new Date())
     )
       throw invalidDate('Event dates are no longer valid.');
+    if (current.status === 'DRAFT' && input.startAt !== undefined) {
+      const tiers = await tx.ticketTier.findMany({
+        where: { eventId, deletedAt: null, salesEndAt: { gt: currentStart } },
+        select: { id: true, name: true },
+      });
+      if (tiers.length)
+        throw new AppError({
+          statusCode: 409,
+          code: 'TIER_WINDOW_CONFLICT',
+          message: 'Saved tier windows exceed the new event start.',
+          errors: tiers.map((tier) => ({
+            field: 'startAt',
+            code: 'TIER_WINDOW_CONFLICT',
+            message: `${tier.name} (${tier.id}): adjust its sales end before moving the event start.`,
+          })),
+        });
+    }
     const updated = await tx.event.update({ where: { id: event.id }, data });
     await tx.auditLog.create({
       data: {
@@ -272,16 +296,19 @@ export const publishEvent = async (actor: Actor, eventId: string) => {
       Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`,
     );
     const current = await findOwnedEvent(eventId, currentActor, tx);
-    const activeTierCount = await tx.ticketTier.count({
-      where: { eventId: event.id, deletedAt: null },
-    });
-    if (!eventCapabilities(current, activeTierCount, 0).canPublish) {
-      throw conflict(
-        'NO_ACTIVE_TICKET_TIERS',
-        'Event needs an active ticket tier',
-        'Create a ticket tier first.',
-      );
-    }
+    const tiers = await tx.ticketTier.findMany({ where: { eventId, deletedAt: null } });
+    const readiness = publicationReadiness(current, tiers);
+    if (!readiness.ready)
+      throw new AppError({
+        statusCode: 409,
+        code: 'PUBLICATION_NOT_READY',
+        message: 'Resolve publication blockers before publishing.',
+        errors: readiness.blockers.map((blocker) => ({
+          code: blocker.code,
+          message: blocker.message,
+          ...(blocker.field ? { field: blocker.field } : {}),
+        })),
+      });
     const updated = await tx.event.update({
       where: { id: event.id },
       data: { status: EventStatus.PUBLISHED, publishedAt: new Date() },

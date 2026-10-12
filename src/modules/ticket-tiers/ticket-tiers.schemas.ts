@@ -6,10 +6,11 @@ export const ticketTierIdParamsSchema = z
 
 const ticketTierFields = {
   name: z.string().trim().min(2).max(100),
-  pricePaisa: z.number().int().min(1),
-  capacity: z.number().int().min(1),
+  pricePaisa: z.number().int().min(1).max(2147483647),
+  capacity: z.number().int().min(1).max(2147483647),
   salesStartAt: z.coerce.date(),
   salesEndAt: z.coerce.date(),
+  salesPaused: z.boolean().optional(),
 };
 
 export const createTicketTierSchema = z
@@ -20,7 +21,16 @@ export const createTicketTierSchema = z
     message: 'Sales end must be after sales start',
   });
 
-export const updateTicketTierSchema = z.object(ticketTierFields).partial().strict();
+export const updateTicketTierSchema = z
+  .object(ticketTierFields)
+  .partial()
+  .extend({ closeSales: z.literal(true).optional() })
+  .strict()
+  .refine(
+    (value) =>
+      Object.keys(value).length > 0 && (!value.closeSales || Object.keys(value).length === 1),
+    { message: 'Supply changed fields, or closeSales alone.' },
+  );
 
 export type CreateTicketTierInput = z.infer<typeof createTicketTierSchema>;
 export type UpdateTicketTierInput = z.infer<typeof updateTicketTierSchema>;

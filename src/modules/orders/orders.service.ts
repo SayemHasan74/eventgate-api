@@ -125,7 +125,12 @@ export const createOrder = async (
           where: { id: input.ticketTierId, deletedAt: null },
           include: { event: true },
         });
-        if (!tier || tier.event.deletedAt || tier.event.status !== 'PUBLISHED') {
+        if (
+          !tier ||
+          tier.salesPaused ||
+          tier.event.deletedAt ||
+          tier.event.status !== 'PUBLISHED'
+        ) {
           throw conflict(
             'TIER_NOT_ON_SALE',
             'Ticket tier is not available for purchase',
@@ -141,10 +146,11 @@ export const createOrder = async (
             AND event."id" = tier."eventId"
             AND event."status" = 'PUBLISHED'
             AND event."deletedAt" IS NULL
-            AND event."startAt" > NOW()
+            AND event."startAt" > clock_timestamp()
             AND tier."deletedAt" IS NULL
-            AND tier."salesStartAt" <= NOW()
-            AND tier."salesEndAt" >= NOW()
+            AND NOT tier."salesPaused"
+            AND tier."salesStartAt" <= clock_timestamp()
+            AND tier."salesEndAt" > clock_timestamp()
             AND tier."reservedQuantity" + tier."soldQuantity" + ${input.quantity} <= tier."capacity"
           RETURNING tier."id"
         `);

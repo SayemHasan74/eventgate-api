@@ -1,5 +1,6 @@
 type EventState = { status: string; startAt: Date; endAt: Date; deletedAt?: Date | null };
 type TierState = {
+  salesPaused?: boolean;
   capacity: number;
   reservedQuantity: number;
   soldQuantity: number;
@@ -51,7 +52,7 @@ export const eventCapabilities = (
     canPublish: draft && Object.values(setupChecks).every(Boolean),
     canCancel: !event.deletedAt && upcoming && ['DRAFT', 'PUBLISHED'].includes(event.status),
     canDelete: draft && orderCount === 0,
-    canManageTiers: draft,
+    canManageTiers: draft || (!event.deletedAt && event.status === 'PUBLISHED' && upcoming),
     setupChecks,
     checkInWindow: checkInWindow(event, now),
   };
@@ -67,27 +68,37 @@ export const tierCapabilities = (
   const saleState =
     event.status !== 'PUBLISHED' || event.deletedAt || tier.deletedAt
       ? 'UNAVAILABLE'
-      : now >= event.startAt || now >= tier.salesEndAt
-        ? 'CLOSED'
-        : now < tier.salesStartAt
-          ? 'UPCOMING'
-          : availableQuantity === 0
-            ? 'SOLD_OUT'
-            : 'OPEN';
-  const canEdit = event.status === 'DRAFT' && !event.deletedAt && !tier.deletedAt;
+      : tier.salesPaused
+        ? 'PAUSED'
+        : now >= event.startAt || now >= tier.salesEndAt
+          ? 'CLOSED'
+          : now < tier.salesStartAt
+            ? 'UPCOMING'
+            : availableQuantity === 0
+              ? 'SOLD_OUT'
+              : 'OPEN';
+  const draft = event.status === 'DRAFT';
+  const published = event.status === 'PUBLISHED' && event.startAt > now;
+  const canEdit = (draft || published) && !event.deletedAt && !tier.deletedAt;
   return {
     availableQuantity,
     saleState,
     canEdit,
-    canDelete: canEdit && !hasOrderHistory,
+    canDelete: canEdit && draft && !hasOrderHistory,
+    canCloseSales:
+      canEdit && published && !tier.salesPaused && tier.salesStartAt < now && tier.salesEndAt > now,
+    canPauseSales: canEdit && !tier.salesPaused,
+    canResumeSales: canEdit && !!tier.salesPaused && tier.salesEndAt > now && event.startAt > now,
     editableFields: !canEdit
       ? []
-      : hasOrderHistory
-        ? ['capacity', 'salesEndAt']
-        : ['name', 'pricePaisa', 'capacity', 'salesStartAt', 'salesEndAt'],
-    minimumCapacity: hasOrderHistory ? tier.capacity : tier.reservedQuantity + tier.soldQuantity,
+      : hasOrderHistory || published
+        ? ['capacity', 'salesEndAt', 'salesPaused']
+        : ['name', 'pricePaisa', 'capacity', 'salesStartAt', 'salesEndAt', 'salesPaused'],
+    minimumCapacity:
+      hasOrderHistory || published ? tier.capacity : tier.reservedQuantity + tier.soldQuantity,
     restrictionCodes: [
-      ...(!canEdit ? ['EVENT_NOT_DRAFT'] : []),
+      ...(!canEdit ? ['EVENT_INVENTORY_LOCKED'] : []),
+      ...(published ? ['PUBLISHED_TIER_FIELDS_LOCKED', 'CAPACITY_REDUCTION_LOCKED'] : []),
       ...(hasOrderHistory ? ['TIER_HISTORY_LOCKED', 'CAPACITY_REDUCTION_LOCKED'] : []),
     ],
   };

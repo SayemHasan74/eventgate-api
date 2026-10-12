@@ -1,53 +1,35 @@
-import { EventStatus, Prisma } from '../../generated/prisma/client.js';
+import { Prisma } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
-
-import { findOwnedEvent } from '../events/events.service.js';
+import { findOwnedEvent, currentOrganizer } from '../events/events.service.js';
 import { invalidatePublicDiscoveryCache } from '../public-events/public-events.cache.js';
 import type { CreateTicketTierInput, UpdateTicketTierInput } from './ticket-tiers.schemas.js';
-import { tierCapabilities, eventCapabilities } from '../../shared/domain/capabilities.js';
+import { tierCapabilities } from '../../shared/domain/capabilities.js';
 import type { PaginationQuery } from '../../shared/responses/pagination.js';
 import { serializableTransaction } from '../../lib/transaction.js';
-
 type Actor = Express.Request['auth'];
-
-const tierNotFound = (): AppError =>
-  new AppError({
-    statusCode: 404,
-    code: 'NOT_FOUND',
-    message: 'Ticket tier not found',
-    errors: [{ code: 'NOT_FOUND', message: 'Ticket tier not found.' }],
+const fail = (code: string, message: string, field?: string): never => {
+  throw new AppError({
+    statusCode: 409,
+    code,
+    message,
+    errors: [{ code, message, ...(field ? { field } : {}) }],
   });
-
-const conflict = (code: string, message: string, detail: string): AppError =>
-  new AppError({ statusCode: 409, code, message, errors: [{ code, message: detail }] });
-
-const invalidSalesWindow = (message: string): AppError =>
-  new AppError({
-    statusCode: 400,
-    code: 'INVALID_SALES_WINDOW',
-    message: 'Invalid sales window',
-    errors: [{ code: 'INVALID_SALES_WINDOW', message }],
-  });
-
-const findOwnedTier = async (eventId: string, tierId: string) => {
-  const tier = await getPrisma().ticketTier.findFirst({
-    where: { id: tierId, eventId, deletedAt: null },
-  });
-  if (!tier) throw tierNotFound();
-  return tier;
 };
-
-const assertDraftEvent = (status: EventStatus) => {
-  if (status !== EventStatus.DRAFT) {
-    throw conflict(
-      'INVALID_EVENT_TRANSITION',
-      'Ticket tiers can only be changed on draft events',
-      'Cancel or complete the event before changing its ticket tiers.',
-    );
-  }
+const assertSalesWindow = (
+  start: Date,
+  end: Date,
+  eventStart: Date,
+  requireFutureStart = false,
+  now = new Date(),
+) => {
+  if (requireFutureStart && start <= now)
+    fail('INVALID_SALES_WINDOW', 'Sales must start in the future.', 'salesStartAt');
+  if (end <= start)
+    fail('INVALID_SALES_WINDOW', 'Sales end must follow sales start.', 'salesEndAt');
+  if (end > eventStart)
+    fail('INVALID_SALES_WINDOW', 'Sales must end no later than the event start.', 'salesEndAt');
 };
-
 export const listManagedTiers = async (actor: Actor, eventId: string, query: PaginationQuery) => {
   const event = await findOwnedEvent(eventId, actor);
   const where = { eventId, deletedAt: null };
@@ -61,179 +43,165 @@ export const listManagedTiers = async (actor: Actor, eventId: string, query: Pag
     }),
     getPrisma().ticketTier.count({ where }),
   ]);
+  const now = new Date();
   return {
     tiers: tiers.map((tier) => ({
       ...tier,
-      ...tierCapabilities(event, tier, tier._count.orders > 0),
-      serverTime: new Date(),
+      ...tierCapabilities(event, tier, tier._count.orders > 0, now),
+      serverTime: now,
     })),
     total,
   };
 };
-
-const assertSalesWindow = (
-  salesStartAt: Date,
-  salesEndAt: Date,
-  eventStartAt: Date,
-  requireFutureStart = false,
-) => {
-  if (requireFutureStart && salesStartAt < new Date()) {
-    throw invalidSalesWindow('Sales cannot start in the past.');
-  }
-  if (salesEndAt <= salesStartAt) throw invalidSalesWindow('Sales end must be after sales start.');
-  if (salesEndAt > eventStartAt) {
-    throw invalidSalesWindow('Sales must end on or before the event start time.');
-  }
+const lockEvent = async (tx: Prisma.TransactionClient, actor: Actor, eventId: string) => {
+  const currentActor = await currentOrganizer(tx, actor.id);
+  await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`);
+  return findOwnedEvent(eventId, currentActor, tx);
 };
-
 export const createTicketTier = async (
   actor: Actor,
   eventId: string,
   input: CreateTicketTierInput,
 ) => {
-  const event = await findOwnedEvent(eventId, actor);
-  if (!eventCapabilities(event, 0, 0).canManageTiers) assertDraftEvent(event.status);
-  assertSalesWindow(input.salesStartAt, input.salesEndAt, event.startAt, true);
-  const tier = await getPrisma().$transaction(async (tx) => {
-    await tx.$queryRaw(
-      Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`,
-    );
-    const current = await findOwnedEvent(eventId, actor, tx);
-    assertDraftEvent(current.status);
-    assertSalesWindow(input.salesStartAt, input.salesEndAt, current.startAt, true);
-    const tier = await tx.ticketTier.create({ data: { ...input, eventId: event.id } });
+  const tier = await serializableTransaction(async (tx) => {
+    const event = await lockEvent(tx, actor, eventId);
+    if (event.status !== 'DRAFT')
+      fail('EVENT_INVENTORY_LOCKED', 'New tiers can only be created on draft events.');
+    assertSalesWindow(input.salesStartAt, input.salesEndAt, event.startAt, true);
+    const created = await tx.ticketTier.create({
+      data: { ...input, salesPaused: input.salesPaused ?? false, eventId },
+    });
     await tx.auditLog.create({
       data: {
         actorId: actor.id,
         action: 'TICKET_TIER_CREATED',
         entityType: 'TICKET_TIER',
-        entityId: tier.id,
+        entityId: created.id,
       },
     });
-    return tier;
+    return created;
   });
   await invalidatePublicDiscoveryCache();
   return tier;
 };
-
 export const updateTicketTier = async (
   actor: Actor,
   eventId: string,
   tierId: string,
   input: UpdateTicketTierInput,
 ) => {
-  const event = await findOwnedEvent(eventId, actor);
-  assertDraftEvent(event.status);
-  const tier = await findOwnedTier(event.id, tierId);
-  const database = getPrisma();
-  const hasOrderHistory = (await database.order.count({ where: { ticketTierId: tier.id } })) > 0;
-  const capabilities = tierCapabilities(event, tier, hasOrderHistory);
-
-  if (
-    capabilities.restrictionCodes.includes('TIER_HISTORY_LOCKED') &&
-    (input.pricePaisa !== undefined || input.name !== undefined || input.salesStartAt !== undefined)
-  ) {
-    throw conflict(
-      'TIER_HISTORY_LOCKED',
-      'Ticket tier fields are locked',
-      'Name, price, and sales start cannot change after order history exists.',
-    );
-  }
-  if (input.capacity !== undefined && input.capacity < tier.reservedQuantity + tier.soldQuantity) {
-    throw conflict(
-      'CAPACITY_TOO_LOW',
-      'Capacity is below reserved and sold tickets',
-      'Capacity cannot invalidate inventory.',
-    );
-  }
-  if (hasOrderHistory && input.capacity !== undefined && input.capacity < tier.capacity) {
-    throw conflict(
-      'CAPACITY_REDUCTION_LOCKED',
-      'Capacity cannot be reduced after orders exist',
-      'Capacity may only increase after order history exists.',
-    );
-  }
-
-  const salesStartAt = input.salesStartAt ?? tier.salesStartAt;
-  const salesEndAt = input.salesEndAt ?? tier.salesEndAt;
-  assertSalesWindow(salesStartAt, salesEndAt, event.startAt, input.salesStartAt !== undefined);
-  const data = Object.fromEntries(
-    Object.entries(input).filter(([, value]) => value !== undefined),
-  ) as Prisma.TicketTierUpdateInput;
-  if (Object.keys(data).length === 0) return tier;
-
   const updated = await serializableTransaction(async (tx) => {
+    const event = await lockEvent(tx, actor, eventId);
     await tx.$queryRaw(
-      Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`,
+      Prisma.sql`SELECT "id" FROM "TicketTier" WHERE "id" = ${tierId}::uuid AND "eventId" = ${eventId}::uuid FOR UPDATE`,
     );
-    const currentEvent = await findOwnedEvent(eventId, actor, tx);
-    const currentTier = await tx.ticketTier.findFirst({
-      where: { id: tierId, eventId, deletedAt: null },
-    });
-    if (!currentTier) throw tierNotFound();
+    const tier = await tx.ticketTier.findFirst({ where: { id: tierId, eventId, deletedAt: null } });
+    if (!tier)
+      throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Ticket tier not found.' });
     const history = await tx.order.count({ where: { ticketTierId: tierId } });
-    const currentCapabilities = tierCapabilities(currentEvent, currentTier, history > 0);
-    if (
-      !currentCapabilities.canEdit ||
-      Object.keys(data).some((field) => !currentCapabilities.editableFields.includes(field))
-    )
-      throw conflict(
-        'TIER_HISTORY_LOCKED',
-        'Tier fields are locked',
-        'Reload the tier capabilities.',
-      );
-    if (input.capacity !== undefined && input.capacity < currentCapabilities.minimumCapacity)
-      throw conflict(
+    const now = new Date();
+    const capabilities = tierCapabilities(event, tier, history > 0, now);
+    if (!capabilities.canEdit)
+      fail('EVENT_INVENTORY_LOCKED', 'Inventory is read-only for this event.');
+    const { closeSales, ...fields } = input;
+    const data = Object.fromEntries(
+      Object.entries(fields).filter(([, value]) => value !== undefined),
+    ) as {
+      name?: string;
+      pricePaisa?: number;
+      capacity?: number;
+      salesStartAt?: Date;
+      salesEndAt?: Date;
+      salesPaused?: boolean;
+    };
+    if (closeSales) {
+      if (!capabilities.canCloseSales)
+        fail(
+          'SALES_NOT_OPEN',
+          'Close sales is available only for an open published window. Pause a future window instead.',
+        );
+      data.salesEndAt = now;
+    }
+    for (const field of Object.keys(data))
+      if (!capabilities.editableFields.includes(field))
+        fail(
+          'TIER_FIELD_LOCKED',
+          'Name, price and sales start are fixed after publication or order history.',
+          field,
+        );
+    if (data.capacity !== undefined && data.capacity < Math.max(1, capabilities.minimumCapacity))
+      fail(
         'CAPACITY_TOO_LOW',
-        'Capacity is too low',
-        'Capacity cannot invalidate existing inventory.',
+        `Capacity must be at least ${Math.max(1, capabilities.minimumCapacity)}; reserved/sold tickets and historical capacity are protected.`,
+        'capacity',
       );
     assertSalesWindow(
-      input.salesStartAt ?? currentTier.salesStartAt,
-      input.salesEndAt ?? currentTier.salesEndAt,
-      currentEvent.startAt,
-      input.salesStartAt !== undefined,
+      data.salesStartAt ?? tier.salesStartAt,
+      data.salesEndAt ?? tier.salesEndAt,
+      event.startAt,
+      data.salesStartAt !== undefined,
+      now,
     );
-    const updated = await tx.ticketTier.update({ where: { id: tier.id }, data });
+    if (
+      event.status === 'PUBLISHED' &&
+      !closeSales &&
+      data.salesEndAt !== undefined &&
+      data.salesEndAt <= now
+    )
+      fail(
+        'INVALID_SALES_WINDOW',
+        'Use Close sales to close an open window. Reopening requires a future sales end.',
+        'salesEndAt',
+      );
+    if (data.salesPaused === false && (data.salesEndAt ?? tier.salesEndAt) <= now)
+      fail(
+        'SALES_WINDOW_CLOSED',
+        'Set a valid future sales end before resuming sales.',
+        'salesEndAt',
+      );
+    const saved = await tx.ticketTier.update({ where: { id: tierId }, data });
     await tx.auditLog.create({
       data: {
         actorId: actor.id,
-        action: 'TICKET_TIER_UPDATED',
+        action: closeSales
+          ? 'TICKET_TIER_SALES_CLOSED'
+          : data.salesPaused !== undefined
+            ? data.salesPaused
+              ? 'TICKET_TIER_SALES_PAUSED'
+              : 'TICKET_TIER_SALES_RESUMED'
+            : 'TICKET_TIER_UPDATED',
         entityType: 'TICKET_TIER',
-        entityId: tier.id,
+        entityId: tierId,
         metadata: { fields: Object.keys(data) },
       },
     });
-    return updated;
+    return saved;
   });
   await invalidatePublicDiscoveryCache();
   return updated;
 };
-
 export const softDeleteTicketTier = async (actor: Actor, eventId: string, tierId: string) => {
-  const event = await findOwnedEvent(eventId, actor);
-  assertDraftEvent(event.status);
-  const tier = await findOwnedTier(event.id, tierId);
-  await getPrisma().$transaction(async (tx) => {
+  await serializableTransaction(async (tx) => {
+    const event = await lockEvent(tx, actor, eventId);
     await tx.$queryRaw(
-      Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`,
+      Prisma.sql`SELECT "id" FROM "TicketTier" WHERE "id" = ${tierId}::uuid AND "eventId" = ${eventId}::uuid FOR UPDATE`,
     );
-    const currentEvent = await findOwnedEvent(eventId, actor, tx);
-    const orderCount = await tx.order.count({ where: { ticketTierId: tier.id } });
-    if (!tierCapabilities(currentEvent, tier, orderCount > 0).canDelete) {
-      throw conflict(
-        'TIER_HAS_ORDERS',
-        'Ticket tier has order history',
-        'Close sales instead of deleting this tier.',
+    const tier = await tx.ticketTier.findFirst({ where: { id: tierId, eventId, deletedAt: null } });
+    if (!tier)
+      throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Ticket tier not found.' });
+    const history = await tx.order.count({ where: { ticketTierId: tierId } });
+    if (!tierCapabilities(event, tier, history > 0).canDelete)
+      fail(
+        'TIER_DELETE_LOCKED',
+        'Only draft tiers with no order history can be deleted. Pause or close sales instead.',
       );
-    }
-    await tx.ticketTier.update({ where: { id: tier.id }, data: { deletedAt: new Date() } });
+    await tx.ticketTier.update({ where: { id: tierId }, data: { deletedAt: new Date() } });
     await tx.auditLog.create({
       data: {
         actorId: actor.id,
         action: 'TICKET_TIER_DELETED',
         entityType: 'TICKET_TIER',
-        entityId: tier.id,
+        entityId: tierId,
       },
     });
   });

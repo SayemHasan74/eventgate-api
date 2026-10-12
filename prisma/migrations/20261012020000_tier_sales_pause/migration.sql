@@ -1,0 +1,1 @@
+ALTER TABLE "TicketTier" ADD COLUMN "salesPaused" BOOLEAN NOT NULL DEFAULT false;
