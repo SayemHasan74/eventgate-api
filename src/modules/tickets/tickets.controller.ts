@@ -10,6 +10,7 @@ import {
   getMyTicketQr,
   listCheckInHistory,
   listMyTickets,
+  listMyBookings,
 } from './tickets.service.js';
 import type { CheckInHistoryQuery } from './tickets.schemas.js';
 
@@ -17,6 +18,16 @@ export const readMyTickets: RequestHandler = async (request, response) => {
   const query = ticketListQuerySchema.parse(request.query);
   const result = await listMyTickets(request.auth.id, query);
   sendList(response, 'Tickets retrieved', result.tickets, paginationMeta(query, result.total));
+};
+export const readMyBookings: RequestHandler = async (request, response) => {
+  const query = ticketListQuerySchema.parse(request.query);
+  const result = await listMyBookings(request.auth.id, query);
+  sendList(
+    response,
+    'Ticket bookings retrieved',
+    result.bookings,
+    paginationMeta(query, result.total),
+  );
 };
 
 export const readMyTicket: RequestHandler = async (request, response) => {

@@ -8,6 +8,7 @@ import { AppError } from '../../shared/errors/app-error.js';
 
 import type { CheckInHistoryQuery, CheckInInput, TicketListQuery } from './tickets.schemas.js';
 import { checkInWindow, refundEligibility } from '../../shared/domain/capabilities.js';
+import { effectiveAdmissionState } from './ticket-admission.js';
 
 const notFound = (): AppError =>
   new AppError({
@@ -39,6 +40,7 @@ const ticketSelect = {
       endAt: true,
       status: true,
       deletedAt: true,
+      imageUrl: true,
     },
   },
   ticketTier: { select: { name: true } },
@@ -70,12 +72,10 @@ const ticketRead = (ticket: Prisma.TicketGetPayload<{ select: typeof ticketSelec
   const serverTime = new Date();
   return {
     ...safeTicket,
-    effectiveAdmissionState:
-      ticket.event.status === 'CANCELLED' || ticket.event.deletedAt
-        ? 'VOIDED'
-        : ticket.event.endAt < serverTime
-          ? 'EVENT_ENDED'
-          : ticket.status,
+    effectiveAdmissionState: effectiveAdmissionState(ticket, serverTime),
+    canShowQr:
+      effectiveAdmissionState(ticket, serverTime) === 'ACTIVE' &&
+      checkInWindow(ticket.event, serverTime).isOpen,
     checkInWindow: checkInWindow(ticket.event, serverTime),
     refundEligibility: refundEligibility(order, serverTime),
     serverTime,
@@ -122,21 +122,109 @@ export const getMyTicket = async (attendeeId: string, ticketId: string) => {
   if (!ticket) throw notFound();
   return ticketRead(ticket);
 };
+export const listMyBookings = async (attendeeId: string, query: TicketListQuery) => {
+  const now = new Date();
+  const where: Prisma.OrderWhereInput = {
+    attendeeId,
+    ...(query.orderId ? { id: query.orderId } : {}),
+    tickets: { some: { ...(query.status ? { status: query.status } : {}) } },
+    ...(query.period === 'past'
+      ? { event: { endAt: { lt: now } } }
+      : query.period === 'upcoming'
+        ? { event: { endAt: { gte: now } } }
+        : {}),
+    ...(query.search
+      ? {
+          OR: [
+            { eventNameSnapshot: { contains: query.search, mode: 'insensitive' } },
+            { ticketTierNameSnapshot: { contains: query.search, mode: 'insensitive' } },
+            { event: { city: { contains: query.search, mode: 'insensitive' } } },
+          ],
+        }
+      : {}),
+  };
+  const database = getPrisma();
+  const [orders, total] = await database.$transaction([
+    database.order.findMany({
+      where,
+      select: {
+        ...ticketSelect.order.select,
+        id: true,
+        eventId: true,
+        eventNameSnapshot: true,
+        ticketTierNameSnapshot: true,
+        quantity: true,
+        event: ticketSelect.event,
+        tickets: {
+          where: { attendeeId },
+          select: { id: true, sequence: true, status: true },
+          orderBy: { sequence: 'asc' },
+        },
+      },
+      orderBy: [{ event: { startAt: query.period === 'past' ? 'desc' : 'asc' } }, { id: 'asc' }],
+      skip: (query.page - 1) * query.limit,
+      take: query.limit,
+    }),
+    database.order.count({ where }),
+  ]);
+  return {
+    bookings: orders.map((order) => {
+      const tickets = order.tickets.map((ticket) => ({
+        ...ticket,
+        effectiveAdmissionState: effectiveAdmissionState(
+          { ...ticket, event: order.event, order },
+          now,
+        ),
+      }));
+      return {
+        orderId: order.id,
+        eventId: order.eventId,
+        event: order.event,
+        eventNameSnapshot: order.eventNameSnapshot,
+        tierName: order.ticketTierNameSnapshot,
+        quantity: order.quantity,
+        passCount: tickets.length,
+        statusCounts: tickets.reduce<Record<string, number>>((counts, ticket) => {
+          counts[ticket.effectiveAdmissionState] =
+            (counts[ticket.effectiveAdmissionState] ?? 0) + 1;
+          return counts;
+        }, {}),
+        tickets,
+      };
+    }),
+    total,
+  };
+};
 
 export const getMyTicketQr = async (attendeeId: string, ticketId: string) => {
-  const ticket = await getPrisma().ticket.findFirst({
-    where: { id: ticketId, attendeeId, status: TicketStatus.ACTIVE },
-    select: { qrToken: true },
+  const qrToken = await serializableTransaction(async (tx) => {
+    const identity = await tx.ticket.findFirst({
+      where: { id: ticketId, attendeeId },
+      select: { orderId: true },
+    });
+    if (!identity) throw notFound();
+    await lockOrderGraph(tx, identity.orderId);
+    const ticket = await tx.ticket.findFirst({
+      where: { id: ticketId, attendeeId },
+      select: { ...ticketSelect, qrToken: true },
+    });
+    if (!ticket) throw notFound();
+    if (!ticketRead(ticket).canShowQr)
+      throw conflict(
+        'TICKET_ADMISSION_BLOCKED',
+        'This pass is not eligible to display an admission QR.',
+        'Review the ticket status and check-in window.',
+      );
+    return ticket.qrToken;
   });
-  if (!ticket) throw notFound();
   // The opaque 256-bit credential is the only QR content: no attendee data is exposed.
   return {
     ticketId,
     mimeType: 'image/png' as const,
-    dataUrl: await toDataURL(ticket.qrToken, {
+    dataUrl: await toDataURL(qrToken, {
       type: 'image/png',
       errorCorrectionLevel: 'M',
-      margin: 1,
+      margin: 4,
       width: 320,
     }),
   };
@@ -184,6 +272,16 @@ export const checkInTicket = async (
     if (actor.role !== UserRole.ADMIN && event.organizerId !== actor.id)
       throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Event not found' });
     assertCheckInWindow(event);
+    const admissionTicket = await tx.ticket.findFirst({
+      where: { eventId, qrToken: input.qrToken },
+      select: ticketSelect,
+    });
+    if (!admissionTicket || effectiveAdmissionState(admissionTicket) !== 'ACTIVE')
+      throw conflict(
+        'TICKET_ADMISSION_BLOCKED',
+        'Ticket cannot be admitted.',
+        'The pass is invalid, already used, or blocked by its booking/refund state.',
+      );
     const updated = await tx.ticket.updateMany({
       where: {
         eventId,

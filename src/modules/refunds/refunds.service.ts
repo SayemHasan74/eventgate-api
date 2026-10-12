@@ -17,6 +17,7 @@ import {
   type RefundEligibilityOrder,
 } from '../../shared/domain/capabilities.js';
 import { refundSummarySelect } from '../../shared/responses/read-contracts.js';
+import { attendeeRefundView } from './attendee-refund.js';
 
 async function lockedRefund(tx: Prisma.TransactionClient, refundId: string) {
   const identity = await tx.refund.findUnique({
@@ -445,14 +446,14 @@ export async function listRefunds(actor: { id: string; role: UserRole }, query: 
   const [refunds, total] = await database.$transaction([
     database.refund.findMany({
       where,
-      select: refundSummarySelect,
+      select: { ...refundSummarySelect, order: { select: { eventNameSnapshot: true } } },
       orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }],
       skip: (query.page - 1) * query.limit,
       take: query.limit,
     }),
     database.refund.count({ where }),
   ]);
-  return { refunds, total };
+  return { refunds: actor.role === 'ADMIN' ? refunds : refunds.map(attendeeRefundView), total };
 }
 
 export async function getRefund(actor: { id: string; role: UserRole }, refundId: string) {
@@ -465,5 +466,8 @@ export async function getRefund(actor: { id: string; role: UserRole }, refundId:
   });
   if (!refund)
     throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Refund not found.' });
-  return { ...refund, serverTime: new Date() };
+  return {
+    ...(actor.role === 'ADMIN' ? refund : attendeeRefundView(refund)),
+    serverTime: new Date(),
+  };
 }

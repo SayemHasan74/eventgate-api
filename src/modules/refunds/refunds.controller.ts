@@ -13,17 +13,14 @@ import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
 import { financialConflict } from './capture-refund.js';
 
-export const createRefundRequest: RequestHandler = async (request, response) =>
-  sendSuccess(
-    response,
-    201,
-    'Refund requested',
-    await requestRefund(
-      request.auth.id,
-      request.params.orderId as string,
-      request.body?.userMessage,
-    ),
+export const createRefundRequest: RequestHandler = async (request, response) => {
+  const refund = await requestRefund(
+    request.auth.id,
+    request.params.orderId as string,
+    request.body?.userMessage,
   );
+  sendSuccess(response, 201, 'Refund requested', await getRefund(request.auth, refund.id));
+};
 export const readRefunds: RequestHandler = async (request, response) => {
   const query = refundListQuerySchema.parse(request.query);
   const result = await listRefunds(request.auth, query);

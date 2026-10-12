@@ -11,6 +11,7 @@ import {
   readMyTicket,
   readMyTicketQr,
   readMyTickets,
+  readMyBookings,
   submitCheckIn,
 } from './tickets.controller.js';
 import {
@@ -28,6 +29,7 @@ ticketsRouter.use((_request, response, next) => {
 });
 ticketsRouter.use(authenticate, authorize(UserRole.ATTENDEE));
 ticketsRouter.get('/', validate({ query: ticketListQuerySchema }), readMyTickets);
+ticketsRouter.get('/bookings', validate({ query: ticketListQuerySchema }), readMyBookings);
 ticketsRouter.get(
   '/:ticketId',
   validate({ params: ticketIdParamsSchema, query: emptyQuerySchema }),

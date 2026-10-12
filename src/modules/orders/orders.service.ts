@@ -15,6 +15,7 @@ import {
   dateRange,
 } from '../../shared/responses/read-contracts.js';
 import { refundEligibility } from '../../shared/domain/capabilities.js';
+import { attendeeRefundView } from '../refunds/attendee-refund.js';
 
 const reservationLifetimeMilliseconds = 15 * 60 * 1000;
 const createOrderScope = (attendeeId: string) => `order:create:${attendeeId}`;
@@ -287,6 +288,7 @@ export const getOrder = async (attendeeId: string, orderId: string) => {
   const pending = order.status === 'PENDING_PAYMENT' && !order.reservationReleasedAt;
   return {
     ...safeOrder,
+    refunds: safeOrder.refunds.map(attendeeRefundView),
     refundEligibility: eligibility,
     ticketIds: order.tickets.map((ticket) => ticket.id),
     payable:
