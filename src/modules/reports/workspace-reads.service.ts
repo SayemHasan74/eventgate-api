@@ -110,53 +110,113 @@ export const getAdminUser = async (userId: string) => {
 export const attendeeOverview = async (attendeeId: string) => {
   const database = getPrisma();
   const now = new Date();
-  const [ordersByStatus, activeTickets, refundRequests, upcomingTickets, recentOrders] =
-    await Promise.all([
-      database.order.groupBy({ by: ['status'], where: { attendeeId }, _count: true }),
-      database.ticket.count({
-        where: {
-          attendeeId,
-          status: 'ACTIVE',
-          event: { status: 'PUBLISHED', endAt: { gte: now }, deletedAt: null },
-        },
-      }),
-      database.refund.count({
-        where: {
-          order: { attendeeId },
-          status: { in: ['REQUESTED', 'APPROVED', 'PROCESSING', 'UNKNOWN'] },
-        },
-      }),
-      database.ticket.findMany({
-        where: {
-          attendeeId,
-          status: 'ACTIVE',
-          event: { status: 'PUBLISHED', endAt: { gte: now }, deletedAt: null },
-        },
-        select: { id: true, orderId: true, event: { select: eventSummarySelect } },
-        orderBy: [{ event: { startAt: 'asc' } }, { id: 'asc' }],
-        take: 5,
-      }),
-      database.order.findMany({
-        where: { attendeeId },
-        select: {
-          id: true,
-          status: true,
-          eventNameSnapshot: true,
-          quantity: true,
-          totalAmountPaisaSnapshot: true,
-          currency: true,
-          createdAt: true,
-        },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: 5,
-      }),
-    ]);
+  const [
+    ordersByStatus,
+    activeTickets,
+    refundRequests,
+    upcomingTickets,
+    recentOrders,
+    activeHoldsCount,
+    activeHolds,
+    refundAttention,
+  ] = await Promise.all([
+    database.order.groupBy({ by: ['status'], where: { attendeeId }, _count: true }),
+    database.ticket.count({
+      where: {
+        attendeeId,
+        status: 'ACTIVE',
+        event: { status: 'PUBLISHED', endAt: { gte: now }, deletedAt: null },
+      },
+    }),
+    database.refund.count({
+      where: {
+        order: { attendeeId },
+        OR: [
+          { status: { in: ['REQUESTED', 'APPROVED', 'PROCESSING', 'UNKNOWN', 'FAILED'] } },
+          { needsInvestigation: true },
+        ],
+      },
+    }),
+    database.ticket.findMany({
+      where: {
+        attendeeId,
+        status: 'ACTIVE',
+        event: { status: 'PUBLISHED', startAt: { gt: now }, deletedAt: null },
+      },
+      select: { id: true, orderId: true, event: { select: eventSummarySelect } },
+      orderBy: [{ event: { startAt: 'asc' } }, { id: 'asc' }],
+      take: 5,
+    }),
+    database.order.findMany({
+      where: { attendeeId },
+      select: {
+        id: true,
+        status: true,
+        eventNameSnapshot: true,
+        ticketTierNameSnapshot: true,
+        quantity: true,
+        totalAmountPaisaSnapshot: true,
+        currency: true,
+        createdAt: true,
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 5,
+    }),
+    database.order.count({
+      where: {
+        attendeeId,
+        status: 'PENDING_PAYMENT',
+        reservationReleasedAt: null,
+        reservationExpiresAt: { gt: now },
+      },
+    }),
+    database.order.findMany({
+      where: {
+        attendeeId,
+        status: 'PENDING_PAYMENT',
+        reservationReleasedAt: null,
+        reservationExpiresAt: { gt: now },
+      },
+      select: {
+        id: true,
+        eventNameSnapshot: true,
+        ticketTierNameSnapshot: true,
+        quantity: true,
+        totalAmountPaisaSnapshot: true,
+        reservationExpiresAt: true,
+      },
+      orderBy: [{ reservationExpiresAt: 'asc' }, { id: 'asc' }],
+      take: 5,
+    }),
+    database.refund.findMany({
+      where: {
+        order: { attendeeId },
+        OR: [
+          { status: { in: ['REQUESTED', 'APPROVED', 'PROCESSING', 'UNKNOWN', 'FAILED'] } },
+          { needsInvestigation: true },
+        ],
+      },
+      select: {
+        id: true,
+        orderId: true,
+        status: true,
+        amountPaisa: true,
+        requestedAt: true,
+        order: { select: { eventNameSnapshot: true } },
+      },
+      orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }],
+      take: 5,
+    }),
+  ]);
   return {
     ordersByStatus: Object.fromEntries(ordersByStatus.map((group) => [group.status, group._count])),
     activeTickets,
     refundRequests,
     upcomingTickets,
     recentOrders,
+    activeHoldsCount,
+    activeHolds,
+    refundAttention,
     serverTime: now,
   };
 };

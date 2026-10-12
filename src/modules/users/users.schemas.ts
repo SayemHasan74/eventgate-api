@@ -5,11 +5,11 @@ import { UserRole, UserStatus } from '../../generated/prisma/client.js';
 export const profileSchema = z
   .object({
     displayName: z.string().trim().min(2).max(120).optional(),
-    phone: z.string().trim().min(6).max(30).optional(),
-    address: z.string().trim().min(5).max(500).optional(),
-    city: z.string().trim().min(2).max(100).optional(),
-    postalCode: z.string().trim().min(3).max(20).optional(),
-    country: z.string().trim().min(2).max(100).optional(),
+    phone: z.string().trim().min(6).max(30).nullable().optional(),
+    address: z.string().trim().min(5).max(500).nullable().optional(),
+    city: z.string().trim().min(2).max(100).nullable().optional(),
+    postalCode: z.string().trim().min(3).max(20).nullable().optional(),
+    country: z.string().trim().min(2).max(100).nullable().optional(),
   })
   .strict()
   .refine((profile) => Object.values(profile).some((value) => value !== undefined), {

@@ -1,4 +1,10 @@
-import { EventStatus, type Prisma, UserRole, UserStatus } from '../../generated/prisma/client.js';
+import {
+  AuthProvider,
+  EventStatus,
+  type Prisma,
+  UserRole,
+  UserStatus,
+} from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { serializableTransaction } from '../../lib/transaction.js';
 import { AppError } from '../../shared/errors/app-error.js';
@@ -62,20 +68,26 @@ const protectLastActiveAdmin = async (
 export const getProfile = async (userId: string) => {
   const user = await getPrisma().user.findFirst({
     where: { id: userId, deletedAt: null },
-    select: userSummarySelect,
+    select: {
+      ...userSummarySelect,
+      identities: { where: { provider: AuthProvider.GOOGLE }, select: { id: true }, take: 1 },
+    },
   });
   if (!user) throw userNotFound();
-  return user;
+  const { identities, ...profile } = user;
+  return { ...profile, googleLinked: identities.length > 0 };
 };
 
-export const updateProfile = async (userId: string, input: ProfileInput) =>
-  getPrisma().user.update({
+export const updateProfile = async (userId: string, input: ProfileInput) => {
+  await getPrisma().user.update({
     where: { id: userId },
     data: Object.fromEntries(
       Object.entries(input).filter(([, value]) => value !== undefined),
     ) as Prisma.UserUpdateInput,
     select: userSummarySelect,
   });
+  return getProfile(userId);
+};
 
 export const listUsers = async (query: UserListQuery) => {
   const where: Prisma.UserWhereInput = {
