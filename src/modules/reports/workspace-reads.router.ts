@@ -107,7 +107,7 @@ overviewRouter.get(
       response,
       200,
       'Organizer overview retrieved',
-      await organizerOverview(request.auth.id),
+      await organizerOverview(request.auth.id, request.auth.role),
     ),
 );
 export { adminReadsRouter, overviewRouter };

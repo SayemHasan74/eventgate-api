@@ -62,10 +62,10 @@ export const eventStatistics = async (actor: { id: string; role: UserRole }, eve
       _sum: { totalAmountPaisaSnapshot: true },
     }),
     getPrisma().ticketTier.findMany({
-      where: { eventId },
+      where: { eventId, deletedAt: null },
       select: { id: true, name: true, capacity: true, soldQuantity: true, reservedQuantity: true },
     }),
-    getPrisma().ticket.count({ where: { eventId, status: 'CHECKED_IN' } }),
+    getPrisma().ticket.count({ where: { eventId, checkedInAt: { not: null } } }),
   ]);
   const paid = orders.find((row) => row.status === OrderStatus.PAID);
   return {

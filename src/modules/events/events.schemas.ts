@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { EventStatus } from '../../generated/prisma/client.js';
-import { listFields } from '../../shared/responses/read-contracts.js';
+import { listFields, dateFields, validDateRange } from '../../shared/responses/read-contracts.js';
 export const managedEventQuerySchema = z
-  .object({ ...listFields, status: z.nativeEnum(EventStatus).optional() })
-  .strict();
+  .object({ ...listFields, ...dateFields, status: z.nativeEnum(EventStatus).optional() })
+  .strict()
+  .refine(validDateRange, { path: ['startBefore'], message: 'End must be after start.' });
 export type ManagedEventQuery = z.infer<typeof managedEventQuerySchema>;
 
 export const eventIdParamsSchema = z.object({ eventId: z.string().uuid() }).strict();

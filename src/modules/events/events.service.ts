@@ -1,4 +1,4 @@
-import { EventStatus, Prisma, UserRole } from '../../generated/prisma/client.js';
+import { EventStatus, Prisma, UserRole, UserStatus } from '../../generated/prisma/client.js';
 import { serializableTransaction } from '../../lib/transaction.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
@@ -8,8 +8,27 @@ import type { CreateEventInput, UpdateEventInput } from './events.schemas.js';
 
 import type { ManagedEventQuery } from './events.schemas.js';
 import { eventCapabilities } from '../../shared/domain/capabilities.js';
+import { dateRange } from '../../shared/responses/read-contracts.js';
 
 type Actor = Express.Request['auth'];
+const currentOrganizer = async (tx: Prisma.TransactionClient, id: string) => {
+  await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "User" WHERE "id" = ${id}::uuid FOR SHARE`);
+  const user = await tx.user.findUnique({
+    where: { id },
+    select: { id: true, role: true, status: true, email: true, displayName: true },
+  });
+  if (
+    !user ||
+    user.status !== UserStatus.ACTIVE ||
+    (user.role !== UserRole.ORGANIZER && user.role !== UserRole.ADMIN)
+  )
+    throw new AppError({
+      statusCode: 403,
+      code: 'FORBIDDEN',
+      message: 'Active organizer access required.',
+    });
+  return { id: user.id, role: user.role, email: user.email, displayName: user.displayName };
+};
 
 const eventNotFound = (): AppError =>
   new AppError({
@@ -56,6 +75,7 @@ export const listManagedEvents = async (actor: Actor, query: ManagedEventQuery) 
     ...base,
     ...(query.status ? { status: query.status } : {}),
     ...(query.search ? { title: { contains: query.search, mode: 'insensitive' as const } } : {}),
+    ...(query.startAfter || query.startBefore ? { startAt: dateRange(query) } : {}),
   };
   const [events, total] = await database.$transaction([
     database.event.findMany({
@@ -88,22 +108,31 @@ export const getManagedEvent = async (actor: Actor, eventId: string, includeDele
   });
   if (!event) throw eventNotFound();
   const capabilities = eventCapabilities(event, event._count.ticketTiers, event._count.orders);
-  const [cancellationJob, refundCounts] = await Promise.all([
-    event.status === 'CANCELLED'
-      ? getPrisma().job.findUnique({
-          where: { deduplicationKey: `event-cancellation:${event.id}` },
-          select: { status: true, completedAt: true },
-        })
-      : null,
-    event.status === 'CANCELLED'
-      ? getPrisma().refund.groupBy({ by: ['status'], where: { order: { eventId } }, _count: true })
-      : [],
-  ]);
+  const [cancellationJob, refundCounts, paidOrders, activeTickets, pendingOrders] =
+    await Promise.all([
+      event.status === 'CANCELLED'
+        ? getPrisma().job.findUnique({
+            where: { deduplicationKey: `event-cancellation:${event.id}` },
+            select: { status: true, completedAt: true },
+          })
+        : null,
+      event.status === 'CANCELLED'
+        ? getPrisma().refund.groupBy({
+            by: ['status'],
+            where: { order: { eventId } },
+            _count: true,
+          })
+        : [],
+      getPrisma().order.count({ where: { eventId, status: 'PAID' } }),
+      getPrisma().ticket.count({ where: { eventId, status: { in: ['ACTIVE', 'CHECKED_IN'] } } }),
+      getPrisma().order.count({ where: { eventId, status: 'PENDING_PAYMENT' } }),
+    ]);
   return {
     ...event,
     capabilities,
     setupChecks: capabilities.setupChecks,
     checkInWindow: capabilities.checkInWindow,
+    cancellationImpact: { paidOrders, activeTickets, pendingOrders },
     cancellationState: {
       cancelledAt: event.cancelledAt,
       dispatchStatus: cancellationJob?.status ?? null,
@@ -116,7 +145,9 @@ export const getManagedEvent = async (actor: Actor, eventId: string, includeDele
 
 export const createEvent = async (actorId: string, input: CreateEventInput) => {
   if (input.startAt <= new Date()) throw invalidDate('Event must start in the future');
-  const event = await getPrisma().$transaction(async (tx) => {
+  const event = await serializableTransaction(async (tx) => {
+    await currentOrganizer(tx, actorId);
+    if (input.startAt <= new Date()) throw invalidDate('Event must start in the future');
     const event = await tx.event.create({
       data: { ...input, imageUrl: input.imageUrl ?? null, organizerId: actorId },
     });
@@ -158,10 +189,11 @@ export const updateEvent = async (actor: Actor, eventId: string, input: UpdateEv
     Object.entries(input).filter(([, value]) => value !== undefined),
   ) as Prisma.EventUpdateInput;
   const updated = await serializableTransaction(async (tx) => {
+    const currentActor = await currentOrganizer(tx, actor.id);
     await tx.$queryRaw(
       Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`,
     );
-    const current = await findOwnedEvent(eventId, actor, tx);
+    const current = await findOwnedEvent(eventId, currentActor, tx);
     const capabilities = eventCapabilities(current, 0, 0);
     if (
       !capabilities.editable ||
@@ -203,11 +235,12 @@ export const softDeleteEvent = async (actor: Actor, eventId: string) => {
       'Cancel published events instead.',
     );
   }
-  await getPrisma().$transaction(async (tx) => {
+  await serializableTransaction(async (tx) => {
+    const currentActor = await currentOrganizer(tx, actor.id);
     await tx.$queryRaw(
       Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`,
     );
-    const current = await findOwnedEvent(eventId, actor, tx);
+    const current = await findOwnedEvent(eventId, currentActor, tx);
     const orderCount = await tx.order.count({ where: { eventId: event.id } });
     if (!eventCapabilities(current, 0, orderCount).canDelete) {
       throw conflict(
@@ -234,10 +267,11 @@ export const publishEvent = async (actor: Actor, eventId: string) => {
     );
   }
   const updated = await serializableTransaction(async (tx) => {
+    const currentActor = await currentOrganizer(tx, actor.id);
     await tx.$queryRaw(
       Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`,
     );
-    const current = await findOwnedEvent(eventId, actor, tx);
+    const current = await findOwnedEvent(eventId, currentActor, tx);
     const activeTierCount = await tx.ticketTier.count({
       where: { eventId: event.id, deletedAt: null },
     });
@@ -276,10 +310,11 @@ export const cancelEvent = async (actor: Actor, eventId: string) => {
     );
   }
   const updated = await serializableTransaction(async (tx) => {
+    const currentActor = await currentOrganizer(tx, actor.id);
     await tx.$queryRaw(
       Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`,
     );
-    const current = await tx.event.findUniqueOrThrow({ where: { id: eventId } });
+    const current = await findOwnedEvent(eventId, currentActor, tx);
     if (!eventCapabilities(current, 0, 0).canCancel)
       throw conflict(
         'INVALID_EVENT_TRANSITION',

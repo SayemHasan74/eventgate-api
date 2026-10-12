@@ -161,25 +161,41 @@ export const attendeeOverview = async (attendeeId: string) => {
   };
 };
 
-export const organizerOverview = async (organizerId: string) => {
+export const organizerOverview = async (organizerId: string, role = 'ORGANIZER') => {
   const database = getPrisma();
-  const where = { organizerId, deletedAt: null };
-  const [eventsByStatus, paidOrders, activeTickets, recentEvents] = await Promise.all([
-    database.event.groupBy({ by: ['status'], where, _count: true }),
-    database.order.count({ where: { event: where, status: 'PAID' } }),
-    database.ticket.count({ where: { event: where, status: 'ACTIVE' } }),
-    database.event.findMany({
-      where,
-      select: eventSummarySelect,
-      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
-      take: 5,
-    }),
-  ]);
+  const where = { ...(role === 'ADMIN' ? {} : { organizerId }), deletedAt: null };
+  const now = new Date();
+  const [eventsByStatus, paidOrders, activeTickets, recentEvents, upcomingEvents, draftEvents] =
+    await Promise.all([
+      database.event.groupBy({ by: ['status'], where, _count: true }),
+      database.order.count({ where: { event: where, status: 'PAID' } }),
+      database.ticket.count({ where: { event: where, status: 'ACTIVE' } }),
+      database.event.findMany({
+        where,
+        select: eventSummarySelect,
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+        take: 5,
+      }),
+      database.event.findMany({
+        where: { ...where, status: 'PUBLISHED', startAt: { gt: now } },
+        select: eventSummarySelect,
+        orderBy: [{ startAt: 'asc' }, { id: 'asc' }],
+        take: 5,
+      }),
+      database.event.findMany({
+        where: { ...where, status: 'DRAFT' },
+        select: eventSummarySelect,
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+        take: 5,
+      }),
+    ]);
   return {
     eventsByStatus: Object.fromEntries(eventsByStatus.map((group) => [group.status, group._count])),
     paidOrders,
     activeTickets,
     recentEvents,
-    serverTime: new Date(),
+    upcomingEvents,
+    draftEvents,
+    serverTime: now,
   };
 };
