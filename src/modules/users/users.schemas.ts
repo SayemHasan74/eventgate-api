@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
 import { UserRole, UserStatus } from '../../generated/prisma/client.js';
+import { dateFields, validDateRange } from '../../shared/responses/read-contracts.js';
+const reason = z.string().trim().min(5).max(1000).optional();
+export const userDeleteSchema = z.object({ reason }).strict().default({});
 
 export const profileSchema = z
   .object({
@@ -21,22 +24,24 @@ export const userIdParamsSchema = z.object({ userId: z.string().uuid() }).strict
 // This deliberately excludes ADMIN. Administrator accounts are seed-only and cannot
 // be created, promoted, or demoted through the public administration API.
 export const userRoleSchema = z
-  .object({ role: z.enum([UserRole.ATTENDEE, UserRole.ORGANIZER]) })
+  .object({ role: z.enum([UserRole.ATTENDEE, UserRole.ORGANIZER]), reason })
   .strict();
 
 export const userStatusSchema = z
-  .object({ status: z.enum([UserStatus.ACTIVE, UserStatus.SUSPENDED]) })
+  .object({ status: z.enum([UserStatus.ACTIVE, UserStatus.SUSPENDED]), reason })
   .strict();
 
 export const userListQuerySchema = z
   .object({
+    ...dateFields,
     page: z.coerce.number().int().min(1).default(1),
     limit: z.coerce.number().int().min(1).max(100).default(20),
     role: z.nativeEnum(UserRole).optional(),
     status: z.nativeEnum(UserStatus).optional(),
     search: z.string().trim().min(1).max(120).optional(),
   })
-  .strict();
+  .strict()
+  .refine(validDateRange);
 
 export type ProfileInput = z.infer<typeof profileSchema>;
 export type UserListQuery = z.infer<typeof userListQuerySchema>;

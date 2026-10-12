@@ -8,6 +8,10 @@ import { paginationMeta } from '../../shared/responses/pagination.js';
 import { getManagedEvent, listManagedEvents } from '../events/events.service.js';
 import { eventIdParamsSchema, managedEventQuerySchema } from '../events/events.schemas.js';
 import { requestEventCancellation } from '../events/events.controller.js';
+import { adminReasonSchema, scheduleAdminReconciliation } from './admin-operations.service.js';
+import { getPrisma } from '../../lib/prisma.js';
+import { getOrder } from '../orders/orders.service.js';
+import { AppError } from '../../shared/errors/app-error.js';
 import {
   getAdminUser,
   getPayment,
@@ -20,6 +24,10 @@ import {
 const empty = z.object({}).strict();
 const adminReadsRouter = Router();
 adminReadsRouter.use(authenticate, authorize('ADMIN'));
+adminReadsRouter.use((_request, response, next) => {
+  response.setHeader('Cache-Control', 'private, no-store');
+  next();
+});
 adminReadsRouter.get(
   '/events',
   validate({ query: managedEventQuerySchema }),
@@ -48,7 +56,11 @@ adminReadsRouter.get(
 );
 adminReadsRouter.post(
   '/events/:eventId/cancel',
-  validate({ params: eventIdParamsSchema, query: empty, body: empty.default({}) }),
+  validate({
+    params: eventIdParamsSchema,
+    query: empty,
+    body: adminReasonSchema.extend({ confirmationTitle: z.string().min(3).max(180) }),
+  }),
   requestEventCancellation,
 );
 adminReadsRouter.get(
@@ -81,6 +93,44 @@ adminReadsRouter.get(
       'User retrieved',
       await getAdminUser(request.params.userId as string),
     ),
+);
+adminReadsRouter.post(
+  '/payments/:attemptId/reconcile',
+  validate({
+    params: z.object({ attemptId: z.string().uuid() }).strict(),
+    query: empty,
+    body: adminReasonSchema,
+  }),
+  async (request, response) =>
+    sendSuccess(
+      response,
+      202,
+      'Verification scheduled, not a payment confirmation',
+      await scheduleAdminReconciliation(
+        request.auth.id,
+        'payment',
+        request.params.attemptId as string,
+        request.body.reason,
+      ),
+    ),
+);
+adminReadsRouter.get(
+  '/orders/:orderId',
+  validate({ params: z.object({ orderId: z.string().uuid() }).strict(), query: empty }),
+  async (request, response) => {
+    const order = await getPrisma().order.findUnique({
+      where: { id: request.params.orderId as string },
+      select: { attendeeId: true },
+    });
+    if (!order)
+      throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Order not found.' });
+    sendSuccess(
+      response,
+      200,
+      'Order retrieved',
+      await getOrder(order.attendeeId, request.params.orderId as string),
+    );
+  },
 );
 
 const overviewRouter = Router();

@@ -75,6 +75,11 @@ export const requestEventCancellation: RequestHandler = async (request, response
     response,
     200,
     'Event cancellation scheduled',
-    await cancelEvent(request.auth, request.params.eventId as string),
+    await cancelEvent(
+      request.auth,
+      request.params.eventId as string,
+      request.body?.reason,
+      request.body?.confirmationTitle,
+    ),
   );
 };

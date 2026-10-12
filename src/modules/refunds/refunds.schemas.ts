@@ -18,8 +18,8 @@ export const reviewRefundSchema = z
     reviewerNote: z.string().trim().min(1).max(1000).optional(),
   })
   .strict()
-  .refine((input) => input.decision !== 'reject' || Boolean(input.reviewerNote), {
+  .refine((input) => Boolean(input.reviewerNote), {
     path: ['reviewerNote'],
-    message: 'A rejection reason is required.',
+    message: 'A reviewer note is required for approval or rejection.',
   });
 export type ReviewRefundInput = z.infer<typeof reviewRefundSchema>;

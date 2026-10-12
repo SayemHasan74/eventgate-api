@@ -20,8 +20,8 @@ export function reportOrderWhere(eventId: string, query: EventReportQuery): Pris
     ...(query.tierId ? { ticketTierId: query.tierId } : {}),
   };
 }
-const sqlOrderScope = (eventId: string, query: EventReportQuery) => Prisma.sql`
-  o."eventId" = ${eventId}::uuid
+const sqlOrderScope = (eventId: string | undefined, query: EventReportQuery) => Prisma.sql`
+  ${eventId ? Prisma.sql`o."eventId" = ${eventId}::uuid` : Prisma.sql`TRUE`}
   ${query.status ? Prisma.sql`AND o."status"::text = ${query.status}` : Prisma.empty}
   ${query.tierId ? Prisma.sql`AND o."ticketTierId" = ${query.tierId}::uuid` : Prisma.empty}`;
 const sqlDates = (column: Prisma.Sql, query: EventReportQuery) => Prisma.sql`
@@ -29,7 +29,10 @@ const sqlDates = (column: Prisma.Sql, query: EventReportQuery) => Prisma.sql`
   ${query.startBefore ? Prisma.sql`AND ${column} < ${query.startBefore}` : Prisma.empty}`;
 // One row per canonical purchase. Refunds are aggregated before joining, so
 // neither multiple refund records nor additional captured attempts multiply sales.
-export const canonicalSalesSql = (eventId: string, query: EventReportQuery) => Prisma.sql`
+export const canonicalSalesSql = (
+  eventId: string | undefined,
+  query: EventReportQuery,
+) => Prisma.sql`
   SELECT o."id", o."paidAt", o."totalAmountPaisaSnapshot" AS gross,
     COALESCE(r.confirmed, 0)::bigint AS refunded,
     COALESCE(r.pending, 0)::bigint AS pending

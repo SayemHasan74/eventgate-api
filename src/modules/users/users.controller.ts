@@ -40,6 +40,7 @@ export const editUserRole: RequestHandler = async (request, response) => {
     request.auth.id,
     request.params.userId as string,
     request.body.role,
+    request.body.reason,
   );
   sendSuccess(response, 200, 'User role updated', user);
 };
@@ -49,11 +50,12 @@ export const editUserStatus: RequestHandler = async (request, response) => {
     request.auth.id,
     request.params.userId as string,
     request.body.status,
+    request.body.reason,
   );
   sendSuccess(response, 200, 'User status updated', user);
 };
 
 export const removeUser: RequestHandler = async (request, response) => {
-  await softDeleteUser(request.auth.id, request.params.userId as string);
+  await softDeleteUser(request.auth.id, request.params.userId as string, request.body?.reason);
   sendSuccess(response, 200, 'User deleted', null);
 };

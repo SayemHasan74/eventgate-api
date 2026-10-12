@@ -25,6 +25,16 @@ import { sendSuccess } from '../../shared/responses/api-response.js';
 import { z } from 'zod';
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
+import {
+  adminReasonSchema,
+  adminSummary,
+  jobQuerySchema,
+  listRecoveryJobs,
+  safeAuditMetadata,
+  retryRecoveryJob,
+} from './admin-operations.service.js';
+import { paginationMeta } from '../../shared/responses/pagination.js';
+import { sendList } from '../../shared/responses/api-response.js';
 const organizerReportsRouter = Router({ mergeParams: true });
 organizerReportsRouter.use(authenticate, authorize(UserRole.ORGANIZER, UserRole.ADMIN));
 organizerReportsRouter.use((_request, response, next) => {
@@ -63,6 +73,46 @@ organizerReportsRouter.get(
 );
 const adminReportsRouter = Router();
 adminReportsRouter.use(authenticate, authorize(UserRole.ADMIN));
+adminReportsRouter.use((_request, response, next) => {
+  response.setHeader('Cache-Control', 'private, no-store');
+  next();
+});
+adminReportsRouter.get(
+  '/summary/:panel',
+  validate({
+    params: z
+      .object({ panel: z.enum(['users', 'events', 'sales', 'refunds', 'incidents']) })
+      .strict(),
+    query: z.object({}).strict(),
+  }),
+  async (request, response) =>
+    sendSuccess(
+      response,
+      200,
+      'Admin summary retrieved',
+      await adminSummary(request.params.panel as string),
+    ),
+);
+adminReportsRouter.get('/jobs', validate({ query: jobQuerySchema }), async (request, response) => {
+  const query = jobQuerySchema.parse(request.query);
+  const result = await listRecoveryJobs(query);
+  sendList(response, 'Recovery jobs retrieved', result.jobs, paginationMeta(query, result.total));
+});
+adminReportsRouter.post(
+  '/jobs/:jobId/retry',
+  validate({
+    params: z.object({ jobId: z.string().uuid() }).strict(),
+    query: z.object({}).strict(),
+    body: adminReasonSchema,
+  }),
+  async (request, response) =>
+    sendSuccess(
+      response,
+      202,
+      'Job requeued, not completed',
+      await retryRecoveryJob(request.auth.id, request.params.jobId as string, request.body.reason),
+    ),
+);
 adminReportsRouter.get('/statistics', readPlatformStats);
 adminReportsRouter.get('/operations', readOperations);
 adminReportsRouter.get('/maintenance', async (_request, response) => {
@@ -86,12 +136,15 @@ adminReportsRouter.get(
         entityType: true,
         entityId: true,
         createdAt: true,
+        metadata: true,
         actor: { select: { id: true, displayName: true } },
       },
     });
     if (!log)
       throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Audit entry not found.' });
-    sendSuccess(response, 200, 'Audit entry retrieved', log);
+    const { metadata, ...safeLog } = log;
+    const safeMetadata = safeAuditMetadata(metadata);
+    sendSuccess(response, 200, 'Audit entry retrieved', { ...safeLog, metadata: safeMetadata });
   },
 );
 export { adminReportsRouter, organizerReportsRouter };

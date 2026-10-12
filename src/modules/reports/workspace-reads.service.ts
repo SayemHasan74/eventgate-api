@@ -27,9 +27,21 @@ export const getPayment = async (attemptId: string, attendeeId?: string) => {
       ...paymentSummarySelect,
       checkoutExpiresAt: true,
       replayOfAttemptId: true,
+      ...(!attendeeId
+        ? {
+            providerTransactionId: true,
+            events: {
+              select: { id: true, eventType: true, receivedAt: true, processedAt: true },
+              orderBy: [{ receivedAt: 'asc' as const }, { id: 'asc' as const }],
+              take: 100,
+            },
+          }
+        : {}),
       order: {
         select: {
           id: true,
+          eventId: true,
+          attendeeId: true,
           status: true,
           eventNameSnapshot: true,
           ticketTierNameSnapshot: true,

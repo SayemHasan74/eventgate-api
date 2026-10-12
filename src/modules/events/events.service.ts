@@ -74,6 +74,9 @@ export const listManagedEvents = async (actor: Actor, query: ManagedEventQuery) 
       : { organizerId: actor.id, deletedAt: null };
   const where = {
     ...base,
+    ...(actor.role === UserRole.ADMIN && query.organizerId
+      ? { organizerId: query.organizerId }
+      : {}),
     ...(query.status ? { status: query.status } : {}),
     ...(query.search ? { title: { contains: query.search, mode: 'insensitive' as const } } : {}),
     ...(query.startAfter || query.startBefore ? { startAt: dateRange(query) } : {}),
@@ -327,7 +330,12 @@ export const publishEvent = async (actor: Actor, eventId: string) => {
   return updated;
 };
 
-export const cancelEvent = async (actor: Actor, eventId: string) => {
+export const cancelEvent = async (
+  actor: Actor,
+  eventId: string,
+  reason?: string,
+  confirmationTitle?: string,
+) => {
   const event = await findOwnedEvent(eventId, actor);
   if (!eventCapabilities(event, 0, 0).canCancel) {
     throw conflict(
@@ -342,6 +350,12 @@ export const cancelEvent = async (actor: Actor, eventId: string) => {
       Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`,
     );
     const current = await findOwnedEvent(eventId, currentActor, tx);
+    if (confirmationTitle !== undefined && confirmationTitle !== current.title)
+      throw conflict(
+        'CONFIRMATION_CHANGED',
+        'Event title changed',
+        'Reload and confirm the current event title before cancelling.',
+      );
     if (!eventCapabilities(current, 0, 0).canCancel)
       throw conflict(
         'INVALID_EVENT_TRANSITION',
@@ -372,6 +386,7 @@ export const cancelEvent = async (actor: Actor, eventId: string) => {
         action: 'EVENT_CANCELLED',
         entityType: 'EVENT',
         entityId: event.id,
+        ...(reason ? { metadata: { reason } } : {}),
       },
     });
     return updated;

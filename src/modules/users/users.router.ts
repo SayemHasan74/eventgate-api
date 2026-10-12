@@ -19,6 +19,7 @@ import {
   userListQuerySchema,
   userRoleSchema,
   userStatusSchema,
+  userDeleteSchema,
 } from './users.schemas.js';
 
 const usersRouter = Router();
@@ -39,6 +40,10 @@ adminRouter.patch(
   validate({ params: userIdParamsSchema, body: userStatusSchema }),
   editUserStatus,
 );
-adminRouter.delete('/users/:userId', validate({ params: userIdParamsSchema }), removeUser);
+adminRouter.delete(
+  '/users/:userId',
+  validate({ params: userIdParamsSchema, body: userDeleteSchema }),
+  removeUser,
+);
 
 export { adminRouter, usersRouter };

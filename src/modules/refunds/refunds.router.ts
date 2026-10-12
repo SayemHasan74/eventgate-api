@@ -3,7 +3,12 @@ import { UserRole } from '../../generated/prisma/client.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { authorize } from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
-import { emptyQuerySchema, emptyCommandSchema } from '../../shared/responses/read-contracts.js';
+import { emptyQuerySchema } from '../../shared/responses/read-contracts.js';
+import {
+  adminReasonSchema,
+  scheduleAdminReconciliation,
+} from '../reports/admin-operations.service.js';
+import { sendSuccess } from '../../shared/responses/api-response.js';
 import {
   createRefundRequest,
   readRefunds,
@@ -56,7 +61,23 @@ adminRefundsRouter.patch(
 );
 adminRefundsRouter.post(
   '/refunds/:refundId/retry',
-  validate({ params: refundIdParamsSchema, query: emptyQuerySchema, body: emptyCommandSchema }),
+  validate({ params: refundIdParamsSchema, query: emptyQuerySchema, body: adminReasonSchema }),
   retryRefund,
+);
+adminRefundsRouter.post(
+  '/refunds/:refundId/reconcile',
+  validate({ params: refundIdParamsSchema, query: emptyQuerySchema, body: adminReasonSchema }),
+  async (request, response) =>
+    sendSuccess(
+      response,
+      202,
+      'Refund verification scheduled, not settlement',
+      await scheduleAdminReconciliation(
+        request.auth.id,
+        'refund',
+        request.params.refundId as string,
+        request.body.reason,
+      ),
+    ),
 );
 export { adminRefundsRouter, attendeeRefundsRouter };

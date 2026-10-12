@@ -10,6 +10,7 @@ import { serializableTransaction } from '../../lib/transaction.js';
 import { AppError } from '../../shared/errors/app-error.js';
 
 import type { ProfileInput, UserListQuery } from './users.schemas.js';
+import { dateRange } from '../../shared/responses/read-contracts.js';
 
 export const userSummarySelect = {
   id: true,
@@ -92,6 +93,7 @@ export const updateProfile = async (userId: string, input: ProfileInput) => {
 export const listUsers = async (query: UserListQuery) => {
   const where: Prisma.UserWhereInput = {
     deletedAt: null,
+    ...(query.startAfter || query.startBefore ? { createdAt: dateRange(query) } : {}),
     ...(query.role ? { role: query.role } : {}),
     ...(query.status ? { status: query.status } : {}),
     ...(query.search
@@ -119,7 +121,12 @@ export const listUsers = async (query: UserListQuery) => {
   return { users, page: query.page, limit: query.limit, total };
 };
 
-export const changeUserRole = async (actorId: string, userId: string, role: UserRole) =>
+export const changeUserRole = async (
+  actorId: string,
+  userId: string,
+  role: UserRole,
+  reason?: string,
+) =>
   serializableTransaction(async (tx) => {
     const target = await findActiveUser(tx, userId);
     if (target.role === UserRole.ADMIN) {
@@ -165,13 +172,18 @@ export const changeUserRole = async (actorId: string, userId: string, role: User
         action: 'USER_ROLE_CHANGED',
         entityType: 'USER',
         entityId: target.id,
-        metadata: { from: target.role, to: role },
+        metadata: { from: target.role, to: role, ...(reason ? { reason } : {}) },
       },
     });
     return { ...updated, changed: true };
   });
 
-export const changeUserStatus = async (actorId: string, userId: string, status: UserStatus) =>
+export const changeUserStatus = async (
+  actorId: string,
+  userId: string,
+  status: UserStatus,
+  reason?: string,
+) =>
   serializableTransaction(async (tx) => {
     const target = await findActiveUser(tx, userId);
     if (target.status === status) {
@@ -207,13 +219,13 @@ export const changeUserStatus = async (actorId: string, userId: string, status: 
         action: 'USER_STATUS_CHANGED',
         entityType: 'USER',
         entityId: target.id,
-        metadata: { from: target.status, to: status },
+        metadata: { from: target.status, to: status, ...(reason ? { reason } : {}) },
       },
     });
     return { ...updated, changed: true };
   });
 
-export const softDeleteUser = async (actorId: string, userId: string) =>
+export const softDeleteUser = async (actorId: string, userId: string, reason?: string) =>
   serializableTransaction(async (tx) => {
     const target = await findActiveUser(tx, userId);
     await protectLastActiveAdmin(tx, target);
@@ -255,7 +267,7 @@ export const softDeleteUser = async (actorId: string, userId: string) =>
         action: 'USER_DELETED',
         entityType: 'USER',
         entityId: target.id,
-        metadata: { previousStatus: target.status },
+        metadata: { previousStatus: target.status, ...(reason ? { reason } : {}) },
       },
     });
   });

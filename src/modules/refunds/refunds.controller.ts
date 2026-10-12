@@ -33,24 +33,41 @@ export const readRefund: RequestHandler = async (request, response) =>
     'Refund retrieved',
     await getRefund(request.auth, request.params.refundId as string),
   );
-export const reviewRefundRequest: RequestHandler = async (request, response) =>
+export const reviewRefundRequest: RequestHandler = async (request, response) => {
+  await reviewRefund(request.auth.id, request.params.refundId as string, request.body);
   sendSuccess(
     response,
     200,
     'Refund reviewed',
-    await reviewRefund(request.auth.id, request.params.refundId as string, request.body),
+    await getRefund(request.auth, request.params.refundId as string),
   );
+};
 export const retryRefund: RequestHandler = async (request, response) => {
   const refund = await getPrisma().refund.findUnique({
     where: { id: request.params.refundId as string },
   });
   if (!refund)
     throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Refund not found.' });
-  if (refund.needsInvestigation || !['APPROVED', 'FAILED'].includes(refund.status))
+  if (
+    refund.needsInvestigation ||
+    refund.status !== 'FAILED' ||
+    !['PROVIDER_REFUND_REJECTED', 'PROVIDER_REFUND_CONFIRMED_FAILED'].includes(
+      refund.failureCode ?? '',
+    )
+  )
     throw financialConflict(
       'REFUND_REQUIRES_INVESTIGATION',
       'Only approved refunds or confirmed provider failures may be initiated. Unknown outcomes must be reconciled.',
     );
+  await getPrisma().auditLog.create({
+    data: {
+      actorId: request.auth.id,
+      action: 'REFUND_RETRY_REQUESTED',
+      entityType: 'REFUND',
+      entityId: refund.id,
+      metadata: { reason: request.body.reason },
+    },
+  });
   await startRefund(request.params.refundId as string);
   sendSuccess(response, 202, 'Refund retry started', null);
 };
