@@ -6,6 +6,8 @@ import { sendSuccess } from '../../shared/responses/api-response.js';
 import { initiateCheckout, processSslcommerzCallback } from './payments.service.js';
 
 import { getPayment } from '../reports/workspace-reads.service.js';
+import { getPrisma } from '../../lib/prisma.js';
+import { paymentReturnUrl } from './payment-return.js';
 export const readPaymentAttempt: RequestHandler = async (request, response) => {
   const attempt = await getPayment(request.params.attemptId as string, request.auth.id);
   response.setHeader('Cache-Control', 'private, no-store');
@@ -44,6 +46,14 @@ export const receiveSslcommerzCallback =
       return;
     }
 
-    const destination = type === 'SUCCESS' ? '/payment/success' : '/payment/cancel';
-    response.redirect(303, `${env.FRONTEND_URL.replace(/\/$/, '')}${destination}`);
+    const transaction = request.body?.tran_id;
+    const attempt =
+      typeof transaction === 'string' && transaction.length > 0 && transaction.length <= 255
+        ? await getPrisma().paymentAttempt.findUnique({
+            where: { merchantTransactionId: transaction },
+            select: { orderId: true },
+          })
+        : null;
+    response.setHeader('Cache-Control', 'no-store');
+    response.redirect(303, paymentReturnUrl(env.FRONTEND_URL, type, attempt?.orderId ?? null));
   };
