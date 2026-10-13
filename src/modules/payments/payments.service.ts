@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import { OrderStatus, PaymentStatus, Prisma, RefundReason } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
+import { writeNotification } from '../notifications/notifications.service.js';
 import { SslcommerzAdapter } from '../../integrations/sslcommerz/sslcommerz.adapter.js';
 
 export { initiateCheckout } from './checkout.service.js';
@@ -243,6 +244,14 @@ export const fulfillValidatedPayment = async (
       },
     });
     invalidateDiscovery = true;
+    await writeNotification(tx, {
+      userId: order.attendeeId,
+      type: 'BOOKING_PAID',
+      title: 'Your booking is confirmed',
+      body: `${order.eventNameSnapshot}: your verified payment issued ${order.quantity} ticket(s). Open your booking to view the passes.`,
+      actionPath: `/orders/${order.id}`,
+      sourceKey: `order-fulfilled:${order.id}:${attempt.id}`,
+    });
     return { outcome: 'fulfilled' as const };
   });
   if (invalidateDiscovery)

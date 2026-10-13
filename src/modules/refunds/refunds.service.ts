@@ -18,6 +18,29 @@ import {
 } from '../../shared/domain/capabilities.js';
 import { refundSummarySelect } from '../../shared/responses/read-contracts.js';
 import { attendeeRefundView } from './attendee-refund.js';
+import { writeRefundNotice } from '../notifications/notifications.service.js';
+async function updateRefundAndNotify(input: {
+  where: Prisma.RefundWhereInput;
+  data: Prisma.RefundUpdateManyMutationInput;
+}) {
+  if (typeof input.where.id !== 'string') throw new Error('Refund identity required.');
+  const id = input.where.id;
+  return serializableTransaction(async (tx) => {
+    const current = await lockedRefund(tx, id);
+    const changed = await tx.refund.updateMany(input);
+    if (
+      changed.count &&
+      typeof input.data.status === 'string' &&
+      current.status !== input.data.status
+    ) {
+      const activity = await tx.refundActivity.create({
+        data: { refundId: id, action: `STATUS_${input.data.status}` },
+      });
+      await writeRefundNotice(tx, id, input.data.status, activity.id);
+    }
+    return changed;
+  });
+}
 
 async function lockedRefund(tx: Prisma.TransactionClient, refundId: string) {
   const identity = await tx.refund.findUnique({
@@ -116,6 +139,7 @@ export async function requestRefund(attendeeId: string, orderId: string, userMes
         note: userMessage ?? null,
       },
     });
+    await writeRefundNotice(tx, refund.id, 'REQUESTED', `request-${refund.requestCount}`);
     await tx.auditLog.create({
       data: {
         actorId: attendeeId,
@@ -161,6 +185,12 @@ export async function reviewRefund(adminId: string, refundId: string, input: Rev
       },
     });
     const action = input.decision === 'approve' ? 'REFUND_APPROVED' : 'REFUND_REJECTED';
+    await writeRefundNotice(
+      tx,
+      refundId,
+      reviewed.status,
+      `review-${reviewed.requestCount}-${reviewed.status}`,
+    );
     await tx.refundActivity.create({
       data: { refundId, actorId: adminId, action, note: input.reviewerNote ?? null },
     });
@@ -229,6 +259,7 @@ export async function startRefund(
     });
     if (claim.count !== 1) return null;
     await tx.refundActivity.create({ data: { refundId, action: 'PROVIDER_INITIATION_CLAIMED' } });
+    await writeRefundNotice(tx, refundId, 'PROCESSING', `processing-${processedAt.toISOString()}`);
     return { ...found, processedAt, bankTransactionId: attempt.providerTransactionId };
   });
   if (!claimed) return;
@@ -255,17 +286,25 @@ export async function startRefund(
           failureMessage: null,
         },
       });
-      if (changed.count)
+      if (changed.count) {
         await tx.refundActivity.create({
           data: {
             refundId,
             action: result.status === 'FAILED' ? 'PROVIDER_REJECTED' : 'PROVIDER_PROCESSING',
           },
         });
+        if (result.status === 'FAILED')
+          await writeRefundNotice(
+            tx,
+            refundId,
+            'FAILED',
+            `failed-${claimed.processedAt.toISOString()}`,
+          );
+      }
     });
   } catch (error) {
     const definitive = error instanceof SslcommerzProviderError && error.outcome === 'FAILED';
-    await getPrisma().refund.updateMany({
+    await updateRefundAndNotify({
       where: {
         id: refundId,
         processedAt: claimed.processedAt,
@@ -300,7 +339,7 @@ export async function reconcileRefund(
     if (refund.processedAt && Date.now() - refund.processedAt.getTime() < 30000) return;
     // Official status queries require refund_ref_id; merchant transaction
     // lookup does not prove a particular refund. Never re-initiate to discover it.
-    await getPrisma().refund.updateMany({
+    await updateRefundAndNotify({
       where: { id: refundId, status: { in: ['PROCESSING', 'UNKNOWN'] }, providerRefundId: null },
       data: {
         status: 'UNKNOWN',
@@ -349,6 +388,12 @@ export async function reconcileRefund(
           },
         });
         await tx.refundActivity.create({ data: { refundId, action: 'PROVIDER_CONFIRMED_FAILED' } });
+        await writeRefundNotice(
+          tx,
+          refundId,
+          'FAILED',
+          `confirmed-failure-${found.processedAt?.toISOString() ?? found.id}`,
+        );
         return false;
       }
       const capture = found.paymentAttempt;
@@ -404,6 +449,7 @@ export async function reconcileRefund(
         },
       });
       await tx.refundActivity.create({ data: { refundId, action: 'PROVIDER_CONFIRMED_REFUNDED' } });
+      await writeRefundNotice(tx, refundId, 'SUCCEEDED', 'settled');
       await tx.auditLog.create({
         data: {
           action: 'REFUND_PROVIDER_CONFIRMED',
@@ -416,7 +462,7 @@ export async function reconcileRefund(
     });
     if (inventoryChanged) await invalidatePublicDiscoveryCache();
   } catch (error) {
-    await getPrisma().refund.updateMany({
+    await updateRefundAndNotify({
       where: { id: refundId, status: { in: ['PROCESSING', 'UNKNOWN'] } },
       data: {
         status: 'UNKNOWN',

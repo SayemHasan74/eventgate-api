@@ -15,11 +15,13 @@ export const isSerializationConflict = (error: unknown): boolean => {
 // this callback because they cannot be rolled back with the transaction.
 export const serializableTransaction = async <T>(
   operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  options: { timeout?: number } = {},
 ): Promise<T> => {
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await getPrisma().$transaction(operation, {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        ...options,
       });
     } catch (error) {
       if (attempt >= 2 || !isSerializationConflict(error)) {

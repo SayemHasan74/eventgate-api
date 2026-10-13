@@ -380,6 +380,16 @@ export const cancelEvent = async (
         runAt: new Date(),
       },
     });
+    await tx.job.upsert({
+      where: { deduplicationKey: `notify-event-cancellation:${event.id}` },
+      update: {},
+      create: {
+        type: 'NOTIFY_EVENT_CANCELLATION',
+        deduplicationKey: `notify-event-cancellation:${event.id}`,
+        payload: { eventId: event.id },
+        runAt: new Date(),
+      },
+    });
     await tx.auditLog.create({
       data: {
         actorId: actor.id,

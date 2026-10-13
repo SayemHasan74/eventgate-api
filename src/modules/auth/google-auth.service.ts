@@ -49,6 +49,11 @@ export const loginWithGoogle = async (identity: VerifiedGoogleIdentity): Promise
 
   if (existingIdentity) {
     assertActiveUser(existingIdentity.user);
+    if (existingIdentity.user.email === identity.email)
+      await database.user.update({
+        where: { id: existingIdentity.user.id },
+        data: { emailVerifiedAt: new Date() },
+      });
     await database.authIdentity.update({
       where: { id: existingIdentity.id },
       data: { providerEmail: identity.email },
@@ -80,6 +85,7 @@ export const loginWithGoogle = async (identity: VerifiedGoogleIdentity): Promise
       const createdUser = await transaction.user.create({
         data: {
           email: identity.email,
+          emailVerifiedAt: new Date(),
           displayName: identity.displayName,
           role: UserRole.ATTENDEE,
           identities: {
@@ -147,6 +153,15 @@ export const linkGoogleIdentity = async (
   const database = getPrisma();
 
   return database.$transaction(async (transaction) => {
+    const account = await transaction.user.findUniqueOrThrow({
+      where: { id: user.id },
+      select: { email: true },
+    });
+    if (account.email === identity.email)
+      await transaction.user.update({
+        where: { id: user.id },
+        data: { emailVerifiedAt: new Date() },
+      });
     const existingIdentity = await transaction.authIdentity.findUnique({
       where: {
         provider_providerSubject: {

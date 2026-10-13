@@ -24,6 +24,10 @@ import { corsOptions } from './shared/security/cors.js';
 import { apiRateLimiter } from './shared/security/rate-limit.js';
 import { openapi } from './docs/openapi.js';
 import { adminReadsRouter, overviewRouter } from './modules/reports/workspace-reads.router.js';
+import {
+  notificationsRouter,
+  notificationAccountRouter,
+} from './modules/notifications/notifications.router.js';
 
 const app = express();
 
@@ -72,6 +76,8 @@ app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapi, { explorer: true }));
 
 app.use('/api/v1/health', healthRouter);
 app.use('/api/v1/auth', authRouter);
+app.use('/api/v1/notifications', notificationsRouter);
+app.use('/api/v1', notificationAccountRouter);
 app.use('/api/v1/events', publicEventsRouter);
 app.use('/api/v1/orders', ordersRouter);
 app.use('/api/v1', attendeeRefundsRouter);

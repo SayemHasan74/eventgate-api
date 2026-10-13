@@ -83,6 +83,8 @@ enum IdempotencyStatus {
 }
 
 enum JobType {
+  DELIVER_NOTIFICATION
+  NOTIFY_EVENT_CANCELLATION
   EXPIRE_ORDER_RESERVATION
   RECONCILE_PAYMENT
   RECONCILE_PAYMENT_EVENT
@@ -100,33 +102,122 @@ enum JobStatus {
 }
 
 model User {
-  id                 String              @id @default(uuid()) @db.Uuid
-  email              String              @unique @db.VarChar(320)
-  displayName        String              @db.VarChar(120)
-  phone              String?             @db.VarChar(30)
-  address            String?             @db.Text
-  city               String?             @db.VarChar(100)
-  postalCode         String?             @db.VarChar(20)
-  country            String?             @db.VarChar(100)
-  passwordHash       String?             @db.VarChar(255)
-  role               UserRole            @default(ATTENDEE)
-  status             UserStatus          @default(ACTIVE)
-  deletedAt          DateTime?           @db.Timestamptz(6)
-  createdAt          DateTime            @default(now()) @db.Timestamptz(6)
-  updatedAt          DateTime            @updatedAt @db.Timestamptz(6)
-  identities         AuthIdentity[]
-  refreshSessions    RefreshSession[]
-  organizedEvents    Event[]             @relation("EventOrganizer")
-  orders             Order[]             @relation("OrderAttendee")
-  tickets            Ticket[]            @relation("TicketOwner")
-  checkedInTickets   Ticket[]            @relation("TicketCheckedInBy")
-  requestedRefunds   Refund[]            @relation("RefundRequester")
-  reviewedRefunds    Refund[]            @relation("RefundReviewer")
-  auditLogs          AuditLog[]          @relation("AuditActor")
-  idempotencyRecords IdempotencyRecord[]
+  id                     String                  @id @default(uuid()) @db.Uuid
+  email                  String                  @unique @db.VarChar(320)
+  displayName            String                  @db.VarChar(120)
+  phone                  String?                 @db.VarChar(30)
+  address                String?                 @db.Text
+  city                   String?                 @db.VarChar(100)
+  postalCode             String?                 @db.VarChar(20)
+  country                String?                 @db.VarChar(100)
+  passwordHash           String?                 @db.VarChar(255)
+  role                   UserRole                @default(ATTENDEE)
+  status                 UserStatus              @default(ACTIVE)
+  deletedAt              DateTime?               @db.Timestamptz(6)
+  emailVerifiedAt        DateTime?               @db.Timestamptz(6)
+  notifications          Notification[]
+  notificationPreference NotificationPreference?
+  emailVerifications     EmailVerification[]
+  createdAt              DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime                @updatedAt @db.Timestamptz(6)
+  identities             AuthIdentity[]
+  refreshSessions        RefreshSession[]
+  organizedEvents        Event[]                 @relation("EventOrganizer")
+  orders                 Order[]                 @relation("OrderAttendee")
+  tickets                Ticket[]                @relation("TicketOwner")
+  checkedInTickets       Ticket[]                @relation("TicketCheckedInBy")
+  requestedRefunds       Refund[]                @relation("RefundRequester")
+  reviewedRefunds        Refund[]                @relation("RefundReviewer")
+  auditLogs              AuditLog[]              @relation("AuditActor")
+  idempotencyRecords     IdempotencyRecord[]
 
   @@index([role, status])
   @@index([status, deletedAt])
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+}
+
+enum NotificationDeliveryState {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  UNKNOWN
+  CANCELLED
+}
+
+model Notification {
+  id         String                 @id @default(uuid()) @db.Uuid
+  userId     String                 @db.Uuid
+  type       String                 @db.VarChar(80)
+  title      String                 @db.VarChar(180)
+  body       String                 @db.VarChar(1000)
+  actionPath String                 @db.VarChar(300)
+  sourceKey  String                 @db.VarChar(255)
+  readAt     DateTime?              @db.Timestamptz(6)
+  createdAt  DateTime               @default(now()) @db.Timestamptz(6)
+  user       User                   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  deliveries NotificationDelivery[]
+
+  @@unique([userId, sourceKey])
+  @@index([userId, createdAt, id])
+  @@index([userId, readAt])
+}
+
+model NotificationPreference {
+  userId              String   @id @db.Uuid
+  inAppEnabled        Boolean  @default(true)
+  emailEnabled        Boolean  @default(false)
+  bookingUpdates      Boolean  @default(true)
+  savedEventReminders Boolean  @default(true)
+  waitlistAlerts      Boolean  @default(true)
+  marketingEmail      Boolean  @default(false)
+  personalizedEmail   Boolean  @default(false)
+  updatedAt           DateTime @updatedAt @db.Timestamptz(6)
+  user                User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+}
+
+model EmailVerification {
+  id         String                 @id @default(uuid()) @db.Uuid
+  userId     String                 @db.Uuid
+  email      String                 @db.VarChar(320)
+  tokenHash  String                 @unique @db.VarChar(64)
+  expiresAt  DateTime               @db.Timestamptz(6)
+  consumedAt DateTime?              @db.Timestamptz(6)
+  createdAt  DateTime               @default(now()) @db.Timestamptz(6)
+  user       User                   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  deliveries NotificationDelivery[]
+
+  @@index([userId, createdAt])
+}
+
+model NotificationDelivery {
+  id                String                    @id @default(uuid()) @db.Uuid
+  notificationId    String                    @db.Uuid
+  channel           NotificationChannel
+  state             NotificationDeliveryState @default(PENDING)
+  providerMessageId String?                   @db.VarChar(255)
+  idempotencyKey    String                    @unique @db.VarChar(255)
+  attempts          Int                       @default(0)
+  nextAttemptAt     DateTime?                 @default(now()) @db.Timestamptz(6)
+  firstAttemptAt    DateTime?                 @db.Timestamptz(6)
+  leaseToken        String?                   @db.Uuid
+  leaseExpiresAt    DateTime?                 @db.Timestamptz(6)
+  error             String?                   @db.VarChar(160)
+  recipient         String?                   @db.VarChar(320)
+  sender            String?                   @db.VarChar(320)
+  baseUrl           String?                   @db.VarChar(500)
+  verificationId    String?                   @db.Uuid
+  createdAt         DateTime                  @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime                  @updatedAt @db.Timestamptz(6)
+  notification      Notification              @relation(fields: [notificationId], references: [id], onDelete: Restrict)
+  verification      EmailVerification?        @relation(fields: [verificationId], references: [id], onDelete: Restrict)
+
+  @@unique([notificationId, channel])
+  @@index([state, nextAttemptAt])
 }
 
 model AuthIdentity {

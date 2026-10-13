@@ -19,6 +19,10 @@ import { reconcileRefund } from '../modules/refunds/refunds.service.js';
 import { ensureCaptureRefund } from '../modules/refunds/capture-refund.js';
 import { serializableTransaction } from '../lib/transaction.js';
 import { lockOrderGraph } from '../lib/financial-locks.js';
+import {
+  deliverNotification,
+  notifyCancellation,
+} from '../modules/notifications/notification-delivery.js';
 
 const leaseSeconds = 60;
 const cancellationBatchSize = 100;
@@ -248,6 +252,27 @@ const completeEvent = async (eventId: string): Promise<void> => {
 
 const processJob = async (job: Job, context: WorkContext): Promise<void> => {
   switch (job.type) {
+    case JobType.DELIVER_NOTIFICATION: {
+      const result = await deliverNotification(jobPayloadId(job, 'deliveryId'));
+      if (
+        result &&
+        ['PENDING', 'UNKNOWN', 'SENDING'].includes(result.state) &&
+        result.nextAttemptAt
+      )
+        throw new RescheduleJob(
+          Math.max(1000, result.nextAttemptAt.getTime() - Date.now()),
+          'Email delivery awaits its persisted retry.',
+        );
+      if (result && ['UNKNOWN', 'FAILED'].includes(result.state))
+        throw new Error(
+          'Email delivery requires admin review; its provider outcome is not confirmed sent.',
+        );
+      return;
+    }
+    case JobType.NOTIFY_EVENT_CANCELLATION:
+      if (!(await notifyCancellation(job)))
+        throw new RescheduleJob(1000, 'Cancellation notifications have another bounded batch.');
+      return;
     case JobType.EXPIRE_ORDER_RESERVATION:
       await releasePendingOrder(jobPayloadId(job, 'orderId'), OrderStatus.EXPIRED);
       return;
@@ -295,14 +320,23 @@ const enqueueOnce = async (
   await getPrisma().job.upsert({
     where: { deduplicationKey },
     update: {},
-    create: { type, deduplicationKey, payload, runAt: new Date() },
+    create: {
+      type,
+      deduplicationKey,
+      payload,
+      runAt: new Date(),
+      ...(type === JobType.DELIVER_NOTIFICATION ? { maxAttempts: 5 } : {}),
+    },
   });
   // Only completed, still-needed reconciliation is eligible for another pass.
   // Never steal a lease, erase failure history, or shorten an existing backoff.
   if (
-    [JobType.RECONCILE_PAYMENT, JobType.RECONCILE_REFUND, JobType.RECONCILE_PAYMENT_EVENT].some(
-      (value) => value === type,
-    )
+    [
+      JobType.RECONCILE_PAYMENT,
+      JobType.RECONCILE_REFUND,
+      JobType.RECONCILE_PAYMENT_EVENT,
+      JobType.DELIVER_NOTIFICATION,
+    ].some((value) => value === type)
   )
     await getPrisma().job.updateMany({
       where: {
@@ -319,6 +353,12 @@ export const scheduleMaintenanceJobs = async (context?: WorkContext): Promise<vo
   // Exclude already scheduled/failed work BEFORE limiting, so old unresolved
   // records cannot starve new payments or later cancellation batches.
   const groups = [
+    {
+      type: JobType.DELIVER_NOTIFICATION,
+      prefix: 'notification-delivery:',
+      key: 'deliveryId',
+      query: Prisma.sql`SELECT "id" FROM "NotificationDelivery" WHERE "channel" = 'EMAIL' AND (("state" IN ('PENDING','UNKNOWN') AND "nextAttemptAt" <= NOW()) OR ("state" = 'SENDING' AND "leaseExpiresAt" <= NOW()))`,
+    },
     {
       type: JobType.EXPIRE_ORDER_RESERVATION,
       prefix: 'expire-order:',
@@ -359,6 +399,7 @@ export const scheduleMaintenanceJobs = async (context?: WorkContext): Promise<vo
   for (const group of groups) {
     if (context?.stopped()) return;
     const recurring = [
+      JobType.DELIVER_NOTIFICATION,
       JobType.RECONCILE_PAYMENT,
       JobType.RECONCILE_REFUND,
       JobType.RECONCILE_PAYMENT_EVENT,

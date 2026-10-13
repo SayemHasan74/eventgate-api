@@ -1,5 +1,6 @@
 import type { Prisma, RefundReason } from '../../generated/prisma/client.js';
 import { AppError } from '../../shared/errors/app-error.js';
+import { writeRefundNotice } from '../notifications/notifications.service.js';
 
 export const liveRefundStates = [
   'REQUESTED',
@@ -63,6 +64,12 @@ export async function ensureCaptureRefund(
     await tx.refundActivity.create({
       data: { refundId: refund.id, action: 'AUTOMATIC_REFUND_APPROVED', note: reason },
     });
+    await writeRefundNotice(
+      tx,
+      refund.id,
+      'APPROVED',
+      `automatic-${refund.updatedAt.toISOString()}`,
+    );
   } else if (reason === 'EVENT_CANCELLATION' && refund.status === 'REQUESTED') {
     refund = await tx.refund.update({ where: { id: refund.id }, data: { status: 'APPROVED' } });
     await tx.refundActivity.create({
@@ -72,6 +79,12 @@ export async function ensureCaptureRefund(
         note: 'Existing attendee request reused for event cancellation.',
       },
     });
+    await writeRefundNotice(
+      tx,
+      refund.id,
+      'APPROVED',
+      `cancellation-${refund.updatedAt.toISOString()}`,
+    );
   }
   if (
     reason === 'EVENT_CANCELLATION' &&

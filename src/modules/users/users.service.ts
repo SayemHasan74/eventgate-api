@@ -11,6 +11,7 @@ import { AppError } from '../../shared/errors/app-error.js';
 
 import type { ProfileInput, UserListQuery } from './users.schemas.js';
 import { dateRange } from '../../shared/responses/read-contracts.js';
+import { writeNotification } from '../notifications/notifications.service.js';
 
 export const userSummarySelect = {
   id: true,
@@ -24,6 +25,7 @@ export const userSummarySelect = {
   role: true,
   status: true,
   createdAt: true,
+  emailVerifiedAt: true,
 } satisfies Prisma.UserSelect;
 
 const userNotFound = (): AppError =>
@@ -166,7 +168,7 @@ export const changeUserRole = async (
       data: { role },
       select: userSummarySelect,
     });
-    await tx.auditLog.create({
+    const audit = await tx.auditLog.create({
       data: {
         actorId,
         action: 'USER_ROLE_CHANGED',
@@ -174,6 +176,14 @@ export const changeUserRole = async (
         entityId: target.id,
         metadata: { from: target.role, to: role, ...(reason ? { reason } : {}) },
       },
+    });
+    await writeNotification(tx, {
+      userId: target.id,
+      type: 'ROLE_CHANGED',
+      title: 'Your EventGate role changed',
+      body: `Your role changed from ${target.role} to ${role}. Your current account opens the matching workspace.`,
+      actionPath: role === 'ORGANIZER' ? '/organizer' : '/account',
+      sourceKey: `role-change:${audit.id}`,
     });
     return { ...updated, changed: true };
   });
