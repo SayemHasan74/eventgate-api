@@ -29,6 +29,7 @@ import {
   notificationAccountRouter,
 } from './modules/notifications/notifications.router.js';
 
+import { savedEventsRouter } from './modules/saved-events/saved-events.router.js';
 const app = express();
 
 app.disable('x-powered-by');
@@ -77,6 +78,7 @@ app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapi, { explorer: true }));
 app.use('/api/v1/health', healthRouter);
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/notifications', notificationsRouter);
+app.use('/api/v1/saved-events', savedEventsRouter);
 app.use('/api/v1', notificationAccountRouter);
 app.use('/api/v1/events', publicEventsRouter);
 app.use('/api/v1/orders', ordersRouter);

@@ -18,6 +18,11 @@ import {
 import { reconcileRefund } from '../modules/refunds/refunds.service.js';
 import { ensureCaptureRefund } from '../modules/refunds/capture-refund.js';
 import { serializableTransaction } from '../lib/transaction.js';
+import {
+  bootstrapReminderJobs,
+  refreshReminderBatch,
+  sendEventReminder,
+} from '../modules/saved-events/reminders.service.js';
 import { lockOrderGraph } from '../lib/financial-locks.js';
 import {
   deliverNotification,
@@ -252,6 +257,13 @@ const completeEvent = async (eventId: string): Promise<void> => {
 
 const processJob = async (job: Job, context: WorkContext): Promise<void> => {
   switch (job.type) {
+    case JobType.SEND_EVENT_REMINDER:
+      await sendEventReminder(job);
+      return;
+    case JobType.REFRESH_EVENT_REMINDERS:
+      if (!(await refreshReminderBatch(job)))
+        throw new RescheduleJob(1000, 'Reminder scheduling has another bounded batch.');
+      return;
     case JobType.DELIVER_NOTIFICATION: {
       const result = await deliverNotification(jobPayloadId(job, 'deliveryId'));
       if (
@@ -349,6 +361,7 @@ const enqueueOnce = async (
 };
 
 export const scheduleMaintenanceJobs = async (context?: WorkContext): Promise<void> => {
+  await bootstrapReminderJobs(() => !!context?.stopped());
   const database = getPrisma();
   // Exclude already scheduled/failed work BEFORE limiting, so old unresolved
   // records cannot starve new payments or later cancellation batches.

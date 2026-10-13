@@ -83,6 +83,8 @@ enum IdempotencyStatus {
 }
 
 enum JobType {
+  SEND_EVENT_REMINDER
+  REFRESH_EVENT_REMINDERS
   DELIVER_NOTIFICATION
   NOTIFY_EVENT_CANCELLATION
   EXPIRE_ORDER_RESERVATION
@@ -118,6 +120,7 @@ model User {
   notifications          Notification[]
   notificationPreference NotificationPreference?
   emailVerifications     EmailVerification[]
+  savedEvents            SavedEvent[]
   createdAt              DateTime                @default(now()) @db.Timestamptz(6)
   updatedAt              DateTime                @updatedAt @db.Timestamptz(6)
   identities             AuthIdentity[]
@@ -150,19 +153,22 @@ enum NotificationDeliveryState {
 }
 
 model Notification {
-  id         String                 @id @default(uuid()) @db.Uuid
-  userId     String                 @db.Uuid
-  type       String                 @db.VarChar(80)
-  title      String                 @db.VarChar(180)
-  body       String                 @db.VarChar(1000)
-  actionPath String                 @db.VarChar(300)
-  sourceKey  String                 @db.VarChar(255)
-  readAt     DateTime?              @db.Timestamptz(6)
-  createdAt  DateTime               @default(now()) @db.Timestamptz(6)
-  user       User                   @relation(fields: [userId], references: [id], onDelete: Restrict)
-  deliveries NotificationDelivery[]
+  reminderJobId String?                @db.Uuid
+  reminderJob   Job?                   @relation(fields: [reminderJobId], references: [id], onDelete: Restrict)
+  id            String                 @id @default(uuid()) @db.Uuid
+  userId        String                 @db.Uuid
+  type          String                 @db.VarChar(80)
+  title         String                 @db.VarChar(180)
+  body          String                 @db.VarChar(1000)
+  actionPath    String                 @db.VarChar(300)
+  sourceKey     String                 @db.VarChar(255)
+  readAt        DateTime?              @db.Timestamptz(6)
+  createdAt     DateTime               @default(now()) @db.Timestamptz(6)
+  user          User                   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  deliveries    NotificationDelivery[]
 
   @@unique([userId, sourceKey])
+  @@index([reminderJobId])
   @@index([userId, createdAt, id])
   @@index([userId, readAt])
 }
@@ -250,34 +256,52 @@ model RefreshSession {
 }
 
 model Event {
-  id          String       @id @default(uuid()) @db.Uuid
-  organizerId String       @db.Uuid
-  title       String       @db.VarChar(180)
-  slug        String       @unique @db.VarChar(200)
-  description String       @db.Text
-  category    String       @db.VarChar(80)
-  venue       String       @db.VarChar(160)
-  city        String       @db.VarChar(100)
-  address     String       @db.Text
-  startAt     DateTime     @db.Timestamptz(6)
-  endAt       DateTime     @db.Timestamptz(6)
-  imageUrl    String?      @db.Text
-  status      EventStatus  @default(DRAFT)
-  publishedAt DateTime?    @db.Timestamptz(6)
-  cancelledAt DateTime?    @db.Timestamptz(6)
-  completedAt DateTime?    @db.Timestamptz(6)
-  deletedAt   DateTime?    @db.Timestamptz(6)
-  createdAt   DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime     @updatedAt @db.Timestamptz(6)
-  organizer   User         @relation("EventOrganizer", fields: [organizerId], references: [id], onDelete: Restrict)
-  ticketTiers TicketTier[]
-  orders      Order[]
-  tickets     Ticket[]
+  reminderVersion Int          @default(0)
+  savedEvents     SavedEvent[]
+  id              String       @id @default(uuid()) @db.Uuid
+  organizerId     String       @db.Uuid
+  title           String       @db.VarChar(180)
+  slug            String       @unique @db.VarChar(200)
+  description     String       @db.Text
+  category        String       @db.VarChar(80)
+  venue           String       @db.VarChar(160)
+  city            String       @db.VarChar(100)
+  address         String       @db.Text
+  startAt         DateTime     @db.Timestamptz(6)
+  endAt           DateTime     @db.Timestamptz(6)
+  imageUrl        String?      @db.Text
+  status          EventStatus  @default(DRAFT)
+  publishedAt     DateTime?    @db.Timestamptz(6)
+  cancelledAt     DateTime?    @db.Timestamptz(6)
+  completedAt     DateTime?    @db.Timestamptz(6)
+  deletedAt       DateTime?    @db.Timestamptz(6)
+  createdAt       DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(6)
+  organizer       User         @relation("EventOrganizer", fields: [organizerId], references: [id], onDelete: Restrict)
+  ticketTiers     TicketTier[]
+  orders          Order[]
+  tickets         Ticket[]
 
   @@index([organizerId, status, deletedAt])
   @@index([status, startAt])
   @@index([city, startAt])
   @@index([category, startAt])
+}
+
+model SavedEvent {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @db.Uuid
+  eventId              String   @db.Uuid
+  createdAt            DateTime @default(now()) @db.Timestamptz(6)
+  saleReminderEnabled  Boolean  @default(true)
+  eventReminderEnabled Boolean  @default(true)
+  reminderVersion      Int      @default(0)
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  event                Event    @relation(fields: [eventId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, eventId])
+  @@index([userId, createdAt, id])
+  @@index([eventId, id])
 }
 
 model TicketTier {
@@ -494,23 +518,24 @@ model IdempotencyRecord {
 }
 
 model Job {
-  id               String    @id @default(uuid()) @db.Uuid
-  type             JobType
-  status           JobStatus @default(PENDING)
-  deduplicationKey String    @unique @db.VarChar(255)
-  payload          Json
-  runAt            DateTime  @db.Timestamptz(6)
-  lockedAt         DateTime? @db.Timestamptz(6)
-  lockedBy         String?   @db.VarChar(120)
-  leaseToken       String?   @db.Uuid
-  leaseExpiresAt   DateTime? @db.Timestamptz(6)
-  attempts         Int       @default(0)
-  failureAttempts  Int       @default(0)
-  maxAttempts      Int       @default(10)
-  lastError        String?   @db.Text
-  completedAt      DateTime? @db.Timestamptz(6)
-  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
+  reminderNotifications Notification[]
+  id                    String         @id @default(uuid()) @db.Uuid
+  type                  JobType
+  status                JobStatus      @default(PENDING)
+  deduplicationKey      String         @unique @db.VarChar(255)
+  payload               Json
+  runAt                 DateTime       @db.Timestamptz(6)
+  lockedAt              DateTime?      @db.Timestamptz(6)
+  lockedBy              String?        @db.VarChar(120)
+  leaseToken            String?        @db.Uuid
+  leaseExpiresAt        DateTime?      @db.Timestamptz(6)
+  attempts              Int            @default(0)
+  failureAttempts       Int            @default(0)
+  maxAttempts           Int            @default(10)
+  lastError             String?        @db.Text
+  completedAt           DateTime?      @db.Timestamptz(6)
+  createdAt             DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime       @updatedAt @db.Timestamptz(6)
 
   @@index([status, runAt])
   @@index([type, status])

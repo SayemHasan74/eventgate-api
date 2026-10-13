@@ -24,6 +24,8 @@ const conflict = (message: string) =>
 const missing = () =>
   new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Recovery record not found.' });
 const references = {
+  SEND_EVENT_REMINDER: ['eventId', 'EVENT'],
+  REFRESH_EVENT_REMINDERS: ['eventId', 'EVENT'],
   DELIVER_NOTIFICATION: ['deliveryId', 'NOTIFICATION_DELIVERY'],
   NOTIFY_EVENT_CANCELLATION: ['eventId', 'EVENT'],
   EXPIRE_ORDER_RESERVATION: ['orderId', 'ORDER'],
@@ -180,6 +182,12 @@ async function sourceEligible(
     throw conflict(
       'Email retry limits and provider idempotency are enforced by the delivery worker. Inspect email incidents; do not reset an uncertain delivery.',
     );
+  if (type === 'SEND_EVENT_REMINDER' || type === 'REFRESH_EVENT_REMINDERS') {
+    const event = await tx.event.findUnique({ where: { id } });
+    if (!event || event.deletedAt || event.status !== 'PUBLISHED' || event.startAt <= new Date())
+      throw conflict('This reminder source is no longer upcoming and published.');
+    return;
+  }
   if (type === 'RECONCILE_PAYMENT') {
     const payment = await tx.paymentAttempt.findUnique({ where: { id } });
     if (!payment) throw missing();

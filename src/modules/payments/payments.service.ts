@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { OrderStatus, PaymentStatus, Prisma, RefundReason } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { writeNotification } from '../notifications/notifications.service.js';
+import { scheduleBookingReminders } from '../saved-events/reminders.service.js';
 import { SslcommerzAdapter } from '../../integrations/sslcommerz/sslcommerz.adapter.js';
 
 export { initiateCheckout } from './checkout.service.js';
@@ -252,6 +253,8 @@ export const fulfillValidatedPayment = async (
       actionPath: `/orders/${order.id}`,
       sourceKey: `order-fulfilled:${order.id}:${attempt.id}`,
     });
+    const paidOrder = await tx.order.findUniqueOrThrow({ where: { id: order.id } });
+    await scheduleBookingReminders(tx, paidOrder, order.event);
     return { outcome: 'fulfilled' as const };
   });
   if (invalidateDiscovery)

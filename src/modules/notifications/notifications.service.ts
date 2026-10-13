@@ -93,6 +93,7 @@ export async function writeNotification(
     body: string;
     actionPath: string;
     sourceKey: string;
+    reminderJobId?: string;
   },
   verificationId?: string,
 ) {

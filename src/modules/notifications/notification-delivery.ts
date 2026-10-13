@@ -3,6 +3,7 @@ import { Prisma } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { serializableTransaction } from '../../lib/transaction.js';
 import { env } from '../../config/env.js';
+import { reminderStillRelevant } from '../saved-events/reminders.service.js';
 import {
   emailAvailable,
   notificationConsent,
@@ -86,7 +87,16 @@ export async function deliverNotification(id: string, adapter = sendEmail) {
     if (delivery.state === 'UNKNOWN' && !delivery.nextAttemptAt) return null;
     const user = delivery.notification.user,
       preference = user.notificationPreference;
+    const reminderEligible =
+      !delivery.notification.reminderJobId ||
+      !!(await tx.job
+        .findUnique({
+          where: { id: delivery.notification.reminderJobId },
+          select: { payload: true },
+        })
+        .then((job) => (job ? reminderStillRelevant(tx, job, user.id, now) : null)));
     const eligible =
+      reminderEligible &&
       user.status === 'ACTIVE' &&
       !user.deletedAt &&
       (!delivery.recipient || delivery.recipient === user.email) &&

@@ -7,6 +7,7 @@ import type { CreateTicketTierInput, UpdateTicketTierInput } from './ticket-tier
 import { tierCapabilities } from '../../shared/domain/capabilities.js';
 import type { PaginationQuery } from '../../shared/responses/pagination.js';
 import { serializableTransaction } from '../../lib/transaction.js';
+import { refreshEventReminders } from '../saved-events/reminders.service.js';
 type Actor = Express.Request['auth'];
 const fail = (code: string, message: string, field?: string): never => {
   throw new AppError({
@@ -71,6 +72,7 @@ export const createTicketTier = async (
     const created = await tx.ticketTier.create({
       data: { ...input, salesPaused: input.salesPaused ?? false, eventId },
     });
+    await refreshEventReminders(tx, eventId);
     await tx.auditLog.create({
       data: {
         actorId: actor.id,
@@ -160,6 +162,7 @@ export const updateTicketTier = async (
         'salesEndAt',
       );
     const saved = await tx.ticketTier.update({ where: { id: tierId }, data });
+    await refreshEventReminders(tx, eventId);
     await tx.auditLog.create({
       data: {
         actorId: actor.id,
@@ -196,6 +199,7 @@ export const softDeleteTicketTier = async (actor: Actor, eventId: string, tierId
         'Only draft tiers with no order history can be deleted. Pause or close sales instead.',
       );
     await tx.ticketTier.update({ where: { id: tierId }, data: { deletedAt: new Date() } });
+    await refreshEventReminders(tx, eventId);
     await tx.auditLog.create({
       data: {
         actorId: actor.id,

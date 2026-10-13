@@ -10,6 +10,7 @@ import type { ManagedEventQuery } from './events.schemas.js';
 import { eventCapabilities } from '../../shared/domain/capabilities.js';
 import { dateRange } from '../../shared/responses/read-contracts.js';
 import { publicationReadiness } from '../../shared/domain/publication-readiness.js';
+import { refreshEventReminders } from '../saved-events/reminders.service.js';
 
 type Actor = Express.Request['auth'];
 export const currentOrganizer = async (tx: Prisma.TransactionClient, id: string) => {
@@ -238,6 +239,7 @@ export const updateEvent = async (actor: Actor, eventId: string, input: UpdateEv
         });
     }
     const updated = await tx.event.update({ where: { id: event.id }, data });
+    await refreshEventReminders(tx, event.id);
     await tx.auditLog.create({
       data: {
         actorId: actor.id,
@@ -277,6 +279,7 @@ export const softDeleteEvent = async (actor: Actor, eventId: string) => {
       );
     }
     await tx.event.update({ where: { id: event.id }, data: { deletedAt: new Date() } });
+    await refreshEventReminders(tx, event.id);
     await tx.auditLog.create({
       data: { actorId: actor.id, action: 'EVENT_DELETED', entityType: 'EVENT', entityId: event.id },
     });
@@ -316,6 +319,7 @@ export const publishEvent = async (actor: Actor, eventId: string) => {
       where: { id: event.id },
       data: { status: EventStatus.PUBLISHED, publishedAt: new Date() },
     });
+    await refreshEventReminders(tx, event.id);
     await tx.auditLog.create({
       data: {
         actorId: actor.id,
@@ -366,6 +370,7 @@ export const cancelEvent = async (
       where: { id: event.id },
       data: { status: EventStatus.CANCELLED, cancelledAt: new Date() },
     });
+    await refreshEventReminders(tx, event.id);
     await tx.ticket.updateMany({
       where: { eventId: event.id, status: { in: ['ACTIVE', 'CHECKED_IN'] } },
       data: { status: 'VOIDED' },
