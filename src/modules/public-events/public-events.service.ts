@@ -7,7 +7,7 @@ import type { DiscoveryQuery } from './public-events.schemas.js';
 import { publicEventSelect } from '../../shared/responses/read-contracts.js';
 import { tierCapabilities } from '../../shared/domain/capabilities.js';
 
-const publicTierSelect = {
+export const publicTierSelect = {
   id: true,
   name: true,
   pricePaisa: true,
@@ -22,7 +22,9 @@ const publicTierSelect = {
 const cacheKey = (name: string, value: unknown): string =>
   `safe-v4:${name}:${Buffer.from(JSON.stringify(value)).toString('base64url')}`;
 
-const publicProjection = (event: NonNullable<Awaited<ReturnType<typeof findPublicEvent>>>) => ({
+export const publicProjection = (
+  event: NonNullable<Awaited<ReturnType<typeof findPublicEvent>>>,
+) => ({
   id: event.id,
   title: event.title,
   slug: event.slug,
