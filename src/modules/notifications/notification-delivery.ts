@@ -4,6 +4,7 @@ import { getPrisma } from '../../lib/prisma.js';
 import { serializableTransaction } from '../../lib/transaction.js';
 import { env } from '../../config/env.js';
 import { reminderStillRelevant } from '../saved-events/reminders.service.js';
+import { waitlistAlertStillRelevant } from '../waitlists/availability.service.js';
 import {
   emailAvailable,
   notificationConsent,
@@ -96,6 +97,8 @@ export async function deliverNotification(id: string, adapter = sendEmail) {
         })
         .then((job) => (job ? reminderStillRelevant(tx, job, user.id, now) : null)));
     const eligible =
+      (delivery.notification.type !== 'WAITLIST_STOCK_ALERT' ||
+        (await waitlistAlertStillRelevant(tx, user.id, delivery.notification.sourceKey))) &&
       reminderEligible &&
       user.status === 'ACTIVE' &&
       !user.deletedAt &&

@@ -19,6 +19,7 @@ import {
 import { refundSummarySelect } from '../../shared/responses/read-contracts.js';
 import { attendeeRefundView } from './attendee-refund.js';
 import { writeRefundNotice } from '../notifications/notifications.service.js';
+import { recordInventoryRelease } from '../waitlists/availability.service.js';
 async function updateRefundAndNotify(input: {
   where: Prisma.RefundWhereInput;
   data: Prisma.RefundUpdateManyMutationInput;
@@ -436,6 +437,7 @@ export async function reconcileRefund(
           data: { soldQuantity: { decrement: found.order.quantity } },
         });
         if (changed.count !== 1) throw new Error('Refund inventory could not be released.');
+        await recordInventoryRelease(tx, found.order.ticketTierId, found.order.quantity);
         released = true;
       }
       await tx.refund.update({

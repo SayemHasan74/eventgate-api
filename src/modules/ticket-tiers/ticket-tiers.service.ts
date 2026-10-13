@@ -8,6 +8,10 @@ import { tierCapabilities } from '../../shared/domain/capabilities.js';
 import type { PaginationQuery } from '../../shared/responses/pagination.js';
 import { serializableTransaction } from '../../lib/transaction.js';
 import { refreshEventReminders } from '../saved-events/reminders.service.js';
+import {
+  recordInventoryRelease,
+  scheduleWaitlistClosure,
+} from '../waitlists/availability.service.js';
 type Actor = Express.Request['auth'];
 const fail = (code: string, message: string, field?: string): never => {
   throw new AppError({
@@ -162,6 +166,18 @@ export const updateTicketTier = async (
         'salesEndAt',
       );
     const saved = await tx.ticketTier.update({ where: { id: tierId }, data });
+    await recordInventoryRelease(
+      tx,
+      tierId,
+      Math.max(0, saved.capacity - tier.capacity),
+      tier.salesPaused && !saved.salesPaused,
+    );
+    await scheduleWaitlistClosure(tx, tierId);
+    if (saved.salesEndAt <= now)
+      await tx.waitlistEntry.updateMany({
+        where: { ticketTierId: tierId, status: { in: ['WAITING', 'NOTIFIED'] } },
+        data: { status: 'CLOSED', generation: { increment: 1 } },
+      });
     await refreshEventReminders(tx, eventId);
     await tx.auditLog.create({
       data: {

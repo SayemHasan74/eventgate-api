@@ -83,6 +83,8 @@ enum IdempotencyStatus {
 }
 
 enum JobType {
+  DISPATCH_WAITLIST_ALERTS
+  CLOSE_TIER_WAITLIST
   SEND_EVENT_REMINDER
   REFRESH_EVENT_REMINDERS
   DELIVER_NOTIFICATION
@@ -121,6 +123,7 @@ model User {
   notificationPreference NotificationPreference?
   emailVerifications     EmailVerification[]
   savedEvents            SavedEvent[]
+  waitlistEntries        WaitlistEntry[]
   createdAt              DateTime                @default(now()) @db.Timestamptz(6)
   updatedAt              DateTime                @updatedAt @db.Timestamptz(6)
   identities             AuthIdentity[]
@@ -305,26 +308,55 @@ model SavedEvent {
 }
 
 model TicketTier {
-  id               String    @id @default(uuid()) @db.Uuid
-  eventId          String    @db.Uuid
-  name             String    @db.VarChar(100)
+  availabilityWave Int             @default(0)
+  waitlistEntries  WaitlistEntry[]
+  id               String          @id @default(uuid()) @db.Uuid
+  eventId          String          @db.Uuid
+  name             String          @db.VarChar(100)
   pricePaisa       Int
   capacity         Int
-  reservedQuantity Int       @default(0)
-  soldQuantity     Int       @default(0)
-  salesStartAt     DateTime  @db.Timestamptz(6)
-  salesEndAt       DateTime  @db.Timestamptz(6)
-  salesPaused      Boolean   @default(false)
-  deletedAt        DateTime? @db.Timestamptz(6)
-  createdAt        DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime  @updatedAt @db.Timestamptz(6)
-  event            Event     @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  reservedQuantity Int             @default(0)
+  soldQuantity     Int             @default(0)
+  salesStartAt     DateTime        @db.Timestamptz(6)
+  salesEndAt       DateTime        @db.Timestamptz(6)
+  salesPaused      Boolean         @default(false)
+  deletedAt        DateTime?       @db.Timestamptz(6)
+  createdAt        DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime        @updatedAt @db.Timestamptz(6)
+  event            Event           @relation(fields: [eventId], references: [id], onDelete: Restrict)
   orders           Order[]
   tickets          Ticket[]
 
   @@unique([eventId, name])
   @@index([eventId, deletedAt])
   @@index([eventId, salesStartAt, salesEndAt])
+}
+
+enum WaitlistStatus {
+  WAITING
+  NOTIFIED
+  LEFT
+  FULFILLED
+  CLOSED
+}
+
+model WaitlistEntry {
+  id             String         @id @default(uuid()) @db.Uuid
+  userId         String         @db.Uuid
+  ticketTierId   String         @db.Uuid
+  status         WaitlistStatus @default(WAITING)
+  generation     Int            @default(0)
+  lastAlertWave  Int?
+  joinedAt       DateTime       @default(now()) @db.Timestamptz(6)
+  lastNotifiedAt DateTime?      @db.Timestamptz(6)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(6)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  ticketTier     TicketTier     @relation(fields: [ticketTierId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, ticketTierId])
+  @@index([userId, status, createdAt, id])
+  @@index([ticketTierId, status, joinedAt, id])
 }
 
 model Order {

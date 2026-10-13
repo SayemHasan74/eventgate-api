@@ -11,6 +11,7 @@ import { eventCapabilities } from '../../shared/domain/capabilities.js';
 import { dateRange } from '../../shared/responses/read-contracts.js';
 import { publicationReadiness } from '../../shared/domain/publication-readiness.js';
 import { refreshEventReminders } from '../saved-events/reminders.service.js';
+import { closeEventWaitlists } from '../waitlists/waitlists.service.js';
 
 type Actor = Express.Request['auth'];
 export const currentOrganizer = async (tx: Prisma.TransactionClient, id: string) => {
@@ -144,6 +145,9 @@ export const getManagedEvent = async (actor: Actor, eventId: string, includeDele
     setupChecks: capabilities.setupChecks,
     checkInWindow: capabilities.checkInWindow,
     cancellationImpact: { paidOrders, activeTickets, pendingOrders },
+    interestedCount: await getPrisma().waitlistEntry.count({
+      where: { ticketTier: { eventId }, status: { in: ['WAITING', 'NOTIFIED'] } },
+    }),
     cancellationState: {
       cancelledAt: event.cancelledAt,
       dispatchStatus: cancellationJob?.status ?? null,
@@ -370,6 +374,7 @@ export const cancelEvent = async (
       where: { id: event.id },
       data: { status: EventStatus.CANCELLED, cancelledAt: new Date() },
     });
+    await closeEventWaitlists(tx, event.id);
     await refreshEventReminders(tx, event.id);
     await tx.ticket.updateMany({
       where: { eventId: event.id, status: { in: ['ACTIVE', 'CHECKED_IN'] } },

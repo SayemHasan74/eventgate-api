@@ -6,6 +6,7 @@ import { AppError } from '../../shared/errors/app-error.js';
 import { invalidatePublicDiscoveryCache } from '../public-events/public-events.cache.js';
 import { lockOrderGraph } from '../../lib/financial-locks.js';
 import { isSerializationConflict } from '../../lib/transaction.js';
+import { recordInventoryRelease } from '../waitlists/availability.service.js';
 
 import type { CreateOrderInput, OrderListQuery } from './orders.schemas.js';
 import {
@@ -354,6 +355,7 @@ export const cancelOrder = async (attendeeId: string, orderId: string) => {
             entityId: order.id,
           },
         });
+        await recordInventoryRelease(tx, order.ticketTierId, order.quantity);
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ),

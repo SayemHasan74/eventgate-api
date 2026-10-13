@@ -19,6 +19,12 @@ import { reconcileRefund } from '../modules/refunds/refunds.service.js';
 import { ensureCaptureRefund } from '../modules/refunds/capture-refund.js';
 import { serializableTransaction } from '../lib/transaction.js';
 import {
+  recordInventoryRelease,
+  dispatchWaitlistWave,
+  closeTierWaitlist,
+  scheduleWaitlistMaintenance,
+} from '../modules/waitlists/availability.service.js';
+import {
   bootstrapReminderJobs,
   refreshReminderBatch,
   sendEventReminder,
@@ -159,6 +165,7 @@ const releasePendingOrder = async (orderId: string, status: 'EXPIRED' | 'CANCELL
       `);
     if (inventoryUpdated !== 1)
       throw new Error(`Could not release inventory for order ${order.id}.`);
+    await recordInventoryRelease(tx, order.ticketTierId, order.quantity);
     await tx.auditLog.create({
       data: {
         action: status === OrderStatus.EXPIRED ? 'ORDER_EXPIRED' : 'ORDER_CANCELLED_FOR_EVENT',
@@ -257,6 +264,14 @@ const completeEvent = async (eventId: string): Promise<void> => {
 
 const processJob = async (job: Job, context: WorkContext): Promise<void> => {
   switch (job.type) {
+    case JobType.DISPATCH_WAITLIST_ALERTS:
+      if (!(await dispatchWaitlistWave(job)))
+        throw new RescheduleJob(1000, 'Waitlist alerts have another bounded batch.');
+      return;
+    case JobType.CLOSE_TIER_WAITLIST:
+      if (!(await closeTierWaitlist(job)))
+        throw new RescheduleJob(1000, 'Waitlist closure has another bounded batch.');
+      return;
     case JobType.SEND_EVENT_REMINDER:
       await sendEventReminder(job);
       return;
@@ -361,6 +376,7 @@ const enqueueOnce = async (
 };
 
 export const scheduleMaintenanceJobs = async (context?: WorkContext): Promise<void> => {
+  await scheduleWaitlistMaintenance(() => !!context?.stopped());
   await bootstrapReminderJobs(() => !!context?.stopped());
   const database = getPrisma();
   // Exclude already scheduled/failed work BEFORE limiting, so old unresolved

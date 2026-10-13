@@ -30,6 +30,7 @@ import {
 } from './modules/notifications/notifications.router.js';
 
 import { savedEventsRouter } from './modules/saved-events/saved-events.router.js';
+import { waitlistsRouter } from './modules/waitlists/waitlists.router.js';
 const app = express();
 
 app.disable('x-powered-by');
@@ -81,6 +82,7 @@ app.use('/api/v1/notifications', notificationsRouter);
 app.use('/api/v1/saved-events', savedEventsRouter);
 app.use('/api/v1', notificationAccountRouter);
 app.use('/api/v1/events', publicEventsRouter);
+app.use('/api/v1', waitlistsRouter);
 app.use('/api/v1/orders', ordersRouter);
 app.use('/api/v1', attendeeRefundsRouter);
 app.use('/api/v1/tickets', ticketsRouter);

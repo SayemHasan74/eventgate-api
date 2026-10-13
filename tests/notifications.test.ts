@@ -54,6 +54,10 @@ beforeEach(() => {
 describe('notification safety boundaries', () => {
   it('allows only local record destinations and applies independent consent', () => {
     expect(validNotificationPath(`/orders/${id}`)).toBe(true);
+    expect(validNotificationPath(`/events/example/tickets?tierId=${id}`)).toBe(true);
+    expect(
+      validNotificationPath(`/events/example/tickets?tierId=${id}&next=https://evil.test`),
+    ).toBe(false);
     for (const path of [
       '//evil.test',
       'https://evil.test',

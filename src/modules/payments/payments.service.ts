@@ -4,6 +4,8 @@ import { OrderStatus, PaymentStatus, Prisma, RefundReason } from '../../generate
 import { getPrisma } from '../../lib/prisma.js';
 import { writeNotification } from '../notifications/notifications.service.js';
 import { scheduleBookingReminders } from '../saved-events/reminders.service.js';
+import { fulfillWaitlist } from '../waitlists/waitlists.service.js';
+import { recordInventoryRelease } from '../waitlists/availability.service.js';
 import { SslcommerzAdapter } from '../../integrations/sslcommerz/sslcommerz.adapter.js';
 
 export { initiateCheckout } from './checkout.service.js';
@@ -184,6 +186,8 @@ export const fulfillValidatedPayment = async (
           WHERE "id" = ${order.ticketTierId} AND "reservedQuantity" >= ${order.quantity}
         `);
     if (inventory !== 1) {
+      if (mustReacquire && order.reservationReleasedAt === null)
+        await recordInventoryRelease(tx, order.ticketTierId, order.quantity);
       await tx.paymentAttempt.update({
         where: { id: attempt.id },
         data: {
@@ -255,6 +259,7 @@ export const fulfillValidatedPayment = async (
     });
     const paidOrder = await tx.order.findUniqueOrThrow({ where: { id: order.id } });
     await scheduleBookingReminders(tx, paidOrder, order.event);
+    await fulfillWaitlist(tx, order.attendeeId, order.ticketTierId);
     return { outcome: 'fulfilled' as const };
   });
   if (invalidateDiscovery)

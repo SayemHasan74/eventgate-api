@@ -34,7 +34,10 @@ export function validNotificationPath(path: string) {
     /^\/(?:orders|refunds|tickets)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
       path,
     ) ||
-    /^\/events\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(path)
+    /^\/events\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(path) ||
+    /^\/events\/[a-z0-9]+(?:-[a-z0-9]+)*\/tickets\?tierId=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+      path,
+    )
   );
 }
 export const verificationKey = () => env.EMAIL_VERIFICATION_SECRET ?? env.JWT_REFRESH_SECRET;

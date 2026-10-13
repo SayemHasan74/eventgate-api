@@ -24,6 +24,8 @@ const conflict = (message: string) =>
 const missing = () =>
   new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Recovery record not found.' });
 const references = {
+  DISPATCH_WAITLIST_ALERTS: ['eventId', 'EVENT'],
+  CLOSE_TIER_WAITLIST: ['eventId', 'EVENT'],
   SEND_EVENT_REMINDER: ['eventId', 'EVENT'],
   REFRESH_EVENT_REMINDERS: ['eventId', 'EVENT'],
   DELIVER_NOTIFICATION: ['deliveryId', 'NOTIFICATION_DELIVERY'],
@@ -186,6 +188,25 @@ async function sourceEligible(
     const event = await tx.event.findUnique({ where: { id } });
     if (!event || event.deletedAt || event.status !== 'PUBLISHED' || event.startAt <= new Date())
       throw conflict('This reminder source is no longer upcoming and published.');
+    return;
+  }
+  if (type === 'DISPATCH_WAITLIST_ALERTS' || type === 'CLOSE_TIER_WAITLIST') {
+    const event = await tx.event.findUnique({ where: { id } });
+    if (!event) throw missing();
+    const upcoming = event.status === 'PUBLISHED' && !event.deletedAt && event.startAt > new Date();
+    if (type === 'DISPATCH_WAITLIST_ALERTS' && !upcoming)
+      throw conflict('The alert event is no longer upcoming and published.');
+    if (
+      type === 'CLOSE_TIER_WAITLIST' &&
+      upcoming &&
+      !(await tx.ticketTier.count({
+        where: {
+          eventId: id,
+          OR: [{ deletedAt: { not: null } }, { salesEndAt: { lte: new Date() } }],
+        },
+      }))
+    )
+      throw conflict('No ticket window is currently eligible for closure.');
     return;
   }
   if (type === 'RECONCILE_PAYMENT') {
