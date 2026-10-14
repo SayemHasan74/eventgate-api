@@ -1,17 +1,50 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const database = vi.hoisted(() => ({ ticket: { findFirst: vi.fn() } }));
+vi.mock('../../src/lib/transaction.js', () => ({
+  serializableTransaction: (operation: (transaction: typeof database) => unknown) =>
+    operation(database),
+}));
+vi.mock('../../src/lib/financial-locks.js', () => ({ lockOrderGraph: vi.fn() }));
 vi.mock('../../src/lib/prisma.js', () => ({ getPrisma: () => database }));
 import { getMyTicketQr } from '../../src/modules/tickets/tickets.service.js';
 describe('private QR JSON contract', () => {
   beforeEach(() => vi.resetAllMocks());
   it('generates an actual PNG without returning a raw credential and queries owner/active status', async () => {
-    database.ticket.findFirst.mockResolvedValue({
+    database.ticket.findFirst.mockResolvedValueOnce({ orderId: 'order-id' }).mockResolvedValueOnce({
+      id: 'ticket-id',
       qrToken: 'opaque-test-credential-not-a-real-ticket-0000000000',
+      status: 'ACTIVE',
+      event: {
+        status: 'PUBLISHED',
+        startAt: new Date(Date.now() + 60 * 60 * 1000),
+        endAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+        deletedAt: null,
+      },
+      ticketTier: { name: 'General' },
+      order: {
+        status: 'PAID',
+        financialReviewRequired: false,
+        fulfilledPaymentAttemptId: 'payment-id',
+        tickets: [{ status: 'ACTIVE' }],
+        event: {
+          status: 'PUBLISHED',
+          startAt: new Date(Date.now() + 60 * 60 * 1000),
+        },
+        fulfilledPaymentAttempt: {
+          status: 'SUCCEEDED',
+          providerTransactionId: 'provider-id',
+          replayOfAttemptId: null,
+        },
+        refunds: [],
+      },
+      checkedInAt: null,
+      sequence: 1,
+      attendee: { displayName: 'Attendee' },
     });
     const qr = await getMyTicketQr('owner-id', 'ticket-id');
-    expect(database.ticket.findFirst).toHaveBeenCalledWith({
-      where: { id: 'ticket-id', attendeeId: 'owner-id', status: 'ACTIVE' },
-      select: { qrToken: true },
+    expect(database.ticket.findFirst).toHaveBeenLastCalledWith({
+      where: { id: 'ticket-id', attendeeId: 'owner-id' },
+      select: expect.objectContaining({ qrToken: true }),
     });
     expect(qr.mimeType).toBe('image/png');
     expect(qr.ticketId).toBe('ticket-id');

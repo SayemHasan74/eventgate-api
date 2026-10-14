@@ -61,15 +61,13 @@ export const sendList = <T>(
   meta: PaginationMeta,
   summary?: Record<string, number>,
 ): Response<ListBody<T>> =>
-  response
-    .status(200)
-    .json({
-      success: true,
-      message,
-      data: safeDiagnostics(data),
-      meta: { page: meta.page, limit: meta.limit, total: meta.total, totalPages: meta.totalPages },
-      ...(summary ? { summary } : {}),
-    });
+  response.status(200).json({
+    success: true,
+    message,
+    data: safeDiagnostics(data),
+    meta: { page: meta.page, limit: meta.limit, total: meta.total, totalPages: meta.totalPages },
+    ...(summary ? { summary } : {}),
+  });
 
 export const sendError = (
   response: Response,

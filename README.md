@@ -1,10 +1,10 @@
 # EventGate API
 
-EventGate is a backend-only event ticketing and QR check-in platform. Organizers publish events with limited ticket tiers, attendees reserve and purchase tickets, verified SSLCommerz payments issue QR tickets, and organizers check each ticket in once.
+EventGate is a full-stack event ticketing platform. This repository contains the Node.js, TypeScript, Express and Prisma API for attendee, organizer and admin workflows. The companion Next.js frontend is maintained in [eventgate-frontend](https://github.com/SayemHasan74/eventgate-frontend).
 
 ## Current status
 
-Parts 1-20 are implemented and the API is deployed at https://eventgate-api.onrender.com. The API includes authentication, event and ticket-tier management, inventory reservations, verified SSLCommerz payment/refund workflows, QR admission, maintenance jobs, reports, tests, API documentation, and submission materials. Google OAuth is configured; a real Google ID-token smoke test and SSLCommerz sandbox payment remain to be demonstrated.
+The API provides password and Google authentication, role-restricted event and ticket-tier management, atomic reservations, SSLCommerz callbacks and refund recovery, private QR passes, check-in, durable jobs, reports, notifications, saved events, waitlists and personalized discovery. The source includes database-backed integration suites and API documentation. See the acceptance checklist for evidence and external blockers; a live URL or configured credentials alone do not prove provider or deployed-flow verification.
 
 ## Architecture
 
@@ -12,14 +12,14 @@ Parts 1-20 are implemented and the API is deployed at https://eventgate-api.onre
 Routes -> Middleware and validation -> Controllers -> Services -> Prisma
 ```
 
-The application is a modular monolith. It will not include a frontend, microservices, seat maps, ticket transfers, coupons, or partial refunds.
+The API is a modular monolith. The Next.js frontend is a separate repository and deployment.
 
 ## Prerequisites
 
 - Node.js 24
 - npm
 
-PostgreSQL and Redis are configured in `docker-compose.yml`.
+PostgreSQL and Redis are configured in `docker-compose.yml`. It starts the ordinary development database on port 5432, an isolated test database named `eventgate_test` on port 5433, and Redis on port 6379. Database suites require `TEST_DATABASE_URL` and refuse cleanup if it resolves to the ordinary database.
 
 ## Local setup
 
@@ -28,6 +28,9 @@ git clone https://github.com/SayemHasan74/eventgate-api.git
 cd eventgate-api
 npm install
 cp .env.example .env
+npm run infra:up
+npm run db:generate
+npm run db:migrate
 npm run dev
 ```
 
@@ -47,8 +50,11 @@ npm run infra:up     # Start PostgreSQL and Redis with Docker Compose
 npm run db:generate  # Generate Prisma Client
 npm run db:migrate   # Apply Prisma migrations
 npm run db:seed      # Seed configured development users and demo data
-npm test             # Unit tests; integration tests require TEST_DATABASE_URL
+npm test             # All suites; integration tests skip and report skipped without TEST_DATABASE_URL
+npm run test:integration # Destructive suites; TEST_DATABASE_URL must target eventgate_test
 ```
+
+Set `TEST_DATABASE_URL=postgresql://eventgate:eventgate@localhost:5433/eventgate_test?schema=public` for integration tests. Apply migrations to that database with `DATABASE_URL="$TEST_DATABASE_URL" npx prisma migrate deploy`, then run `npm run test:integration`. Never target a production or ordinary development database. CI provisions an isolated PostgreSQL database and Redis and applies migrations before running the suites.
 
 ## Documentation
 

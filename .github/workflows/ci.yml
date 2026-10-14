@@ -15,6 +15,31 @@ jobs:
     timeout-minutes: 10
     env:
       DATABASE_URL: postgresql://eventgate:eventgate@localhost:5432/eventgate?schema=public
+      TEST_DATABASE_URL: postgresql://eventgate:eventgate@localhost:5432/eventgate_test?schema=public
+      REDIS_URL: redis://localhost:6379
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: eventgate
+          POSTGRES_PASSWORD: eventgate
+          POSTGRES_DB: eventgate_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U eventgate -d eventgate_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -30,6 +55,9 @@ jobs:
 
       - name: Generate Prisma Client
         run: npm run db:generate
+
+      - name: Apply migrations to the dedicated test database
+        run: DATABASE_URL="$TEST_DATABASE_URL" npx prisma migrate deploy
 
       - name: Run local verification
         run: npm run check

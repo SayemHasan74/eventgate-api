@@ -29,6 +29,24 @@ services:
       timeout: 5s
       retries: 10
 
+  postgres-test:
+    image: postgres:17-alpine
+    container_name: eventgate-test-postgres
+    environment:
+      POSTGRES_USER: eventgate
+      POSTGRES_PASSWORD: eventgate
+      POSTGRES_DB: eventgate_test
+    ports:
+      - '5433:5432'
+    volumes:
+      - eventgate_test_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U eventgate -d eventgate_test']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   eventgate_postgres_data:
   eventgate_redis_data:
+  eventgate_test_postgres_data:

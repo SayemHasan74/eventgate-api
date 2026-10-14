@@ -35,6 +35,7 @@ export const openapi = {
     { name: '06 Tickets and check-in' },
     { name: '07 Refunds' },
     { name: '08 Reports' },
+    { name: '09 Preferences and recommendations' },
   ],
   components: {
     securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' } },
@@ -163,6 +164,65 @@ export const openapi = {
         responses: {
           '200': { description: 'Event with available ticket tiers' },
           '404': { description: 'Not found' },
+        },
+      },
+    },
+    '/events/recommended': {
+      get: {
+        tags: ['09 Preferences and recommendations'],
+        summary: 'Read private attendee recommendations',
+        description:
+          'Authenticated ATTENDEE only. Private no-store response; limit is 1–12, default 6. Ranking uses explicit preferences and saved upcoming event categories only.',
+        security: bearer,
+        parameters: [
+          {
+            name: 'limit',
+            in: 'query',
+            schema: { type: 'integer', minimum: 1, maximum: 12, default: 6 },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Recommended events with a truthful explanation and current sale state',
+          },
+          '401': { description: 'Authentication required' },
+          '403': { description: 'Attendee role required' },
+          '429': { description: 'Rate limit exceeded' },
+          '503': { description: 'Database temporarily unavailable' },
+        },
+      },
+    },
+    '/users/me/event-preferences': {
+      get: {
+        tags: ['09 Preferences and recommendations'],
+        summary: 'Read event preference profile and current category/city options',
+        security: bearer,
+        responses: {
+          '200': { description: 'Private no-store preference profile' },
+          '401': { description: 'Authentication required' },
+          '403': { description: 'Attendee role required' },
+          '429': { description: 'Rate limit exceeded' },
+          '503': { description: 'Database temporarily unavailable' },
+        },
+      },
+      patch: {
+        tags: ['09 Preferences and recommendations'],
+        summary: 'Save explicit event preferences',
+        description:
+          'Provide preferredCity (existing distinct city or null), up to five existing category values, and personalizationEnabled. Categories and cities match case-insensitively.',
+        security: bearer,
+        requestBody: jsonBody({
+          preferredCity: 'Dhaka',
+          preferredCategories: ['Music'],
+          personalizationEnabled: true,
+        }),
+        responses: {
+          '200': { description: 'Saved private preference profile' },
+          '400': { description: 'Invalid category/city or more than five categories' },
+          '401': { description: 'Authentication required' },
+          '403': { description: 'Attendee role required' },
+          '429': { description: 'Rate limit exceeded' },
+          '503': { description: 'Database temporarily unavailable' },
         },
       },
     },

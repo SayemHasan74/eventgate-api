@@ -1,41 +1,38 @@
-# EventGate Swagger recording script (7–9 minutes)
+# EventGate walkthrough (about 7 minutes)
 
-Open `https://eventgate-api.onrender.com/docs/` after the documentation deploy finishes. Keep Swagger in its default order and use the numbered tags. You can explain the response without submitting every request; for protected requests, paste the appropriate bearer token using the **Authorize** button.
+Use a dedicated demo account and database. Do not record credentials, cookies, access or refresh tokens, QR contents, payment secrets, or attendee personal data. Use one already-published demo event; avoid deleting production or shared demo records.
 
-## Say and show in this order
+## 1. Architecture and access (45 seconds)
 
-1. **01 Health — service status.** “This is the EventGate OpenAPI documentation. I start with the liveness check to show the process is running, then the readiness check to show PostgreSQL is connected.” Open `GET /health/live`, then `GET /health/ready`.
-2. **02 Authentication — identity and sessions.** “The API supports attendee registration, password login, Google ID-token login, refresh-token rotation, and logout.” Show the request bodies on `POST /auth/register`, `POST /auth/login`, `POST /auth/google`, `POST /auth/refresh`, and `POST /auth/logout`. Mention that passwords and tokens are never shown in the recording.
-3. **03 Public discovery — no token required.** “Published events are searchable and each event has a public detail page with its available ticket tiers.” Show `GET /events` with `search=launch`, then `GET /events/{slug}` with `eventgate-launch-demo`.
-4. **04 Organizer lifecycle — protected management.** “Organizers create a draft event, add ticket tiers, publish or cancel the event, and can edit or soft-delete their own resources.” Show the populated bodies and path fields for the organizer event and ticket-tier operations. Explain that object-level authorization prevents editing another organizer’s event.
-5. **05 Orders and payment — reservation to gateway.** “An attendee reserves a tier with quantity and an Idempotency-Key. Repeating the same key safely replays the same reservation instead of overselling.” Show `POST /orders` with the example body and header, then the order list/detail, cancel, and the SSLCommerz checkout operation. Explain that checkout returns a hosted gateway URL and provider callbacks control fulfillment.
-6. **06 Tickets and check-in — one-time admission.** “After verified payment, the attendee can list a ticket and retrieve its QR SVG. The organizer submits the QR token for check-in, and a second scan is rejected.” Show the ticket and QR path fields, then the check-in body and history query. Keep the real QR token hidden.
-7. **07 Refunds — controlled review.** “The attendee requests a whole-order refund. An admin reviews it, and the provider refund can be retried if recovery work is needed.” Show the populated `orderId`, `refundId`, and `{ "decision": "approve" }` body, plus the attendee/admin refund list operations.
-8. **08 Reports — role-restricted visibility.** “Organizers see reports for their own event, while admins see platform statistics, operations, and audit logs.” Show the three report groups. Finish by pointing out that every protected operation displays the bearer lock and every operation documents success and error responses.
-9. **Closing.** “This demonstrates the complete EventGate flow: health, authentication, public discovery, organizer lifecycle, safe ticket reservation, verified payment, QR admission, refunds, and reporting. The repository also includes the Postman collection and automated checks.”
+Show the API and frontend repositories. Explain the request path: route, authentication/validation middleware, controller, service, Prisma/PostgreSQL. Identify attendee, organizer, and admin access. Sign in as each only if authorized demo accounts are available.
 
-## Recording rules
+## 2. Organizer event lifecycle (60 seconds)
 
-- Hide `.env`, passwords, access tokens, refresh tokens, Google secrets, SSLCommerz credentials, and QR tokens.
-- The dark Swagger theme follows the browser/OS theme and is normal. The green/blue endpoint colors indicate HTTP methods, not errors.
-- “No parameters” should only appear on endpoints that genuinely take no input, such as the health checks. The updated page should show fields for login, orders, checkout IDs/headers, check-in, and refunds.
-- Use the real deployed URL in the recording, but do not submit destructive organizer actions unless you intend to change the demo data.
+As an organizer, show an event draft, its ticket tiers, readiness/publish state, and the public event listing. Show an invalid request or a forbidden cross-role request and its error response. Use a disposable draft for any create/edit/cancel action.
 
-Use a local PostgreSQL/Redis setup and a local `.env` created from `.env.example`. Run migrations and seed data first. Never show real passwords, access tokens, QR tokens, gateway credentials, or a production environment file.
+## 3. Attendee discovery and booking (60 seconds)
 
-1. **Architecture — 45 seconds.** Show the repository and explain the flow: routes, middleware and Zod validation, controllers, services, and Prisma. Show the schema’s Event, TicketTier, Order, PaymentAttempt, Ticket, Refund, and AuditLog relationships.
-2. **Roles and security — 60 seconds.** Log in as attendee, organizer, and admin using locally seeded credentials. Show an attendee receiving `403` on an organizer endpoint, then show the admin user-management/report view. Mention short-lived access tokens and rotating refresh tokens.
-3. **Event lifecycle — 60 seconds.** As organizer, create a draft event and tiers, publish it, and show public search. Try to mutate a published tier or access another organizer’s event to demonstrate the protected workflow.
-4. **Order concurrency — 60 seconds.** Create an attendee order with an `Idempotency-Key`. Repeat it with the same key, then show the response is replayed. Explain the conditional PostgreSQL inventory update that prevents overselling.
-5. **Payment flow — 60 seconds.** Show the checkout session endpoint and callback routes. Explain that callback bodies are recorded but SSLCommerz validation controls fulfillment. If sandbox credentials are available, run a sandbox payment; otherwise state clearly that the real gateway demo is pending credentials.
-6. **QR check-in — 60 seconds.** Show an attendee’s ticket and QR image, then scan/send the token as the organizer. Repeat the scan to show the duplicate rejection. Explain the atomic `ACTIVE → CHECKED_IN` transition.
-7. **Refund and cancellation — 60 seconds.** Request a whole-order refund and show the admin approval path blocks ticket use. Explain that only provider-confirmed completion changes order/ticket/inventory state. Cancel an upcoming event and show the maintenance job creates recoverable refund work.
-8. **Documentation and tests — 45 seconds.** Open `/docs`, import the Postman collection, and run `npm run check`. Show the ticket concurrency integration test and explain that it requires a real `TEST_DATABASE_URL`.
+Browse and filter events, open event details, and show sale timing and availability. If demonstrating recommendations, open the preference controls and explain the displayed category/city/saved-event reason. Save an event and show the attendee account reflects it. Create a reservation only in the demo environment.
 
-## Recording checklist
+## 4. Payment and ticket fulfillment (60–90 seconds)
 
-- [ ] Use a dedicated local/demo database.
-- [ ] Hide `.env`, credential fields, tokens, and QR tokens.
-- [ ] State whether SSLCommerz sandbox was actually run.
-- [ ] Show one `403`, one validation error, and one duplicate check-in rejection.
-- [ ] Record and upload the video manually; this repository does not contain a recording or submission link.
+Show the checkout handoff and explain that only a verified provider callback fulfills the order. If a real sandbox transaction and callback were completed for this recording, show its resulting paid order and ticket. If not, explicitly say the provider flow is pending; a redirect or query parameter is not proof of payment.
+
+## 5. QR admission and duplicate protection (60 seconds)
+
+Show the attendee's private PNG ticket QR without revealing its contents. As the organizer, scan or manually submit it once, then repeat the scan to demonstrate that duplicate admission is rejected. Explain the atomic one-time state transition.
+
+## 6. Refund and admin operations (60 seconds)
+
+Show an attendee refund request and its current state, then show the admin review/reconciliation queue. Distinguish requested, processing, and provider-confirmed completion. Do not call a pending refund successful. Show one admin report or audit entry.
+
+## 7. Reliability and close (45 seconds)
+
+Show the test database is isolated from development/production, point out CI and the migration history, and explain one inventory/idempotency guarantee. State any provider or hosted checks that remain pending.
+
+## Before recording
+
+- Use disposable local/demo data and verify the accounts' roles.
+- Do not expose secrets, session cookies, tokens, QR payloads, or personal data.
+- Keep a refund and payment marked pending until the provider confirms its terminal result.
+- Only claim Google, camera, payment, refund, and hosted deployment behavior that was actually demonstrated.

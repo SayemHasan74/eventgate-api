@@ -93,6 +93,21 @@ if (!testDatabaseUrl) {
         paidAt: new Date(),
       },
     });
+    const paymentAttempt = await database.paymentAttempt.create({
+      data: {
+        orderId: order.id,
+        sequence: 1,
+        merchantTransactionId: `paid-${crypto.randomUUID()}`,
+        providerTransactionId: `bank-${crypto.randomUUID()}`,
+        amountPaisa: order.totalAmountPaisaSnapshot,
+        status: 'SUCCEEDED',
+        completedAt: new Date(),
+      },
+    });
+    await database.order.update({
+      where: { id: order.id },
+      data: { fulfilledPaymentAttemptId: paymentAttempt.id },
+    });
     const ticket = await database.ticket.create({
       data: {
         orderId: order.id,

@@ -191,7 +191,7 @@ if (!testUrl) {
       expect(await db.ticket.count({ where: { orderId: f.order.id, status: 'VOIDED' } })).toBe(2);
       await expect(
         checkInTicket(actor, f.event.id, { qrToken: ticket.qrToken }),
-      ).rejects.toMatchObject({ code: 'CHECK_IN_NOT_OPEN' });
+      ).resolves.toMatchObject({ resultCode: 'WINDOW_CLOSED' });
     });
 
     it('unknown checkout creation cannot be restarted by changing the key', async () => {
@@ -409,7 +409,7 @@ if (!testUrl) {
         }),
       ).toBe(1);
       await expect(requestRefund(f.attendee.id, f.order.id)).rejects.toMatchObject({
-        code: 'REFUND_NOT_ELIGIBLE',
+        code: 'ORDER_NOT_PAID',
       });
     });
 
@@ -469,7 +469,7 @@ if (!testUrl) {
         data: { status: 'CHECKED_IN', checkedInAt: new Date(), checkedInById: f.organizer.id },
       });
       await expect(requestRefund(f.attendee.id, f.order.id)).rejects.toMatchObject({
-        code: 'REFUND_NOT_ELIGIBLE',
+        code: 'TICKETS_NOT_UNUSED',
       });
       await cancelEvent({ id: f.organizer.id, role: 'ORGANIZER' }, f.event.id);
       expect(await db.ticket.count({ where: { status: 'VOIDED' } })).toBe(2);
@@ -490,10 +490,12 @@ if (!testUrl) {
     it('recovery validates persisted callback evidence without assigning an unverified unique validation ID', async () => {
       const f = await fixture();
       const checkout = await initiateCheckout(f.attendee.id, f.order.id, 'recover-key');
-      await processSslcommerzCallback('IPN', {
-        tran_id: checkout.data.merchantTransactionId,
-        val_id: 'recover-validation',
-      });
+      await expect(
+        processSslcommerzCallback('IPN', {
+          tran_id: checkout.data.merchantTransactionId,
+          val_id: 'recover-validation',
+        }),
+      ).rejects.toThrow('Persisted payment callback verification needs retry.');
       expect(
         await db.paymentAttempt.findUnique({ where: { id: checkout.data.paymentAttemptId } }),
       ).toMatchObject({ status: 'UNKNOWN', providerValidationId: null });

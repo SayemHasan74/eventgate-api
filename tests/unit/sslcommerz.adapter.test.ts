@@ -130,16 +130,14 @@ describe('SSLCommerz refund identity', () => {
     remarks: 'ATTENDEE_REQUEST',
   };
   it('sends deterministic whole-capture identity and accepts the documented provider reference', async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValue(
-        Response.json({
-          APIConnect: 'DONE',
-          bank_tran_id: refund.bankTransactionId,
-          refund_ref_id: 'refund-ref',
-          status: 'success',
-        }),
-      );
+    const fetcher = vi.fn().mockResolvedValue(
+      Response.json({
+        APIConnect: 'DONE',
+        bank_tran_id: refund.bankTransactionId,
+        refund_ref_id: 'refund-ref',
+        status: 'success',
+      }),
+    );
     expect(await new SslcommerzAdapter(fetcher).initiateRefund(refund)).toEqual({
       providerRefundId: 'refund-ref',
       status: 'PROCESSING',
@@ -176,16 +174,14 @@ describe('SSLCommerz refund identity', () => {
   });
   it('accepts only a matching provider-confirmed terminal outcome', async () => {
     const adapter = new SslcommerzAdapter(
-      vi
-        .fn()
-        .mockResolvedValue(
-          Response.json({
-            APIConnect: 'DONE',
-            bank_tran_id: 'capture-bank',
-            refund_ref_id: 'refund-ref',
-            status: 'refunded',
-          }),
-        ),
+      vi.fn().mockResolvedValue(
+        Response.json({
+          APIConnect: 'DONE',
+          bank_tran_id: 'capture-bank',
+          refund_ref_id: 'refund-ref',
+          status: 'refunded',
+        }),
+      ),
     );
     expect(await adapter.getRefundStatus('refund-ref', 'capture-bank')).toBe('SUCCEEDED');
   });

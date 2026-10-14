@@ -246,6 +246,42 @@
           }
         }
       ]
+    },
+    {
+      "name": "Saved events and personalized discovery",
+      "item": [
+        {
+          "name": "Event preference profile",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/users/me/event-preferences"
+          }
+        },
+        {
+          "name": "Update event preferences",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"preferredCity\": \"Dhaka\",\n  \"preferredCategories\": [\"Music\"],\n  \"personalizationEnabled\": true\n}"
+            },
+            "url": "{{baseUrl}}/users/me/event-preferences"
+          }
+        },
+        {
+          "name": "Recommended events",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/events/recommended?limit=6"
+          }
+        }
+      ]
     }
   ]
 }

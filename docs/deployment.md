@@ -1,10 +1,10 @@
 # Deployment
 
-## Current verification status
+## Current verification status (2026-10-14)
 
-The EventGate web service is live at https://eventgate-api.onrender.com. It uses Neon PostgreSQL and Upstash Redis, and Render health checks return `200` from `GET /api/v1/health/ready`.
+The source is pushed to the `main` branch. A readiness request to `https://eventgate-api.onrender.com/api/v1/health/ready` returned `200` once, followed by `503` responses from docs/OpenAPI requests. The current hosted revision and stable availability therefore remain unverified. The Vercel homepage returned `200`; that does not verify authenticated role workflows.
 
-The committed [`render.yaml`](../render.yaml) still describes both the web service and maintenance cron job. Render required billing information to create the cron job, so only the free web service was deployed manually. Google OAuth is configured; SSLCommerz sandbox checkout still needs a real transaction verification.
+The committed [`render.yaml`](../render.yaml) describes the API web service. The maintenance worker runs inside the service; verify its heartbeat from the admin maintenance status and logs. OAuth account/linking and SSLCommerz provider-confirmed purchase/refund require separate live evidence and are not asserted here.
 
 ## Render setup
 
@@ -13,7 +13,7 @@ The committed [`render.yaml`](../render.yaml) still describes both the web servi
 3. Set the service environment variables, including `DATABASE_URL`, `REDIS_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `NODE_ENV=production`, and a specific `CORS_ORIGINS` value.
 4. Use `npm ci --include=dev && npm run db:generate && npm run build` as the build command. The explicit `--include=dev` lets TypeScript build with `NODE_ENV=production`.
 5. Use `npm run start` as the start command and `/api/v1/health/ready` as the health-check path.
-6. Before enabling public traffic, apply migrations from a trusted deployment environment with `npm run db:migrate` and create the demo accounts with the configured seed variables and `npm run db:seed`.
+6. Confirm startup logs show `prisma migrate deploy` completed before the service became ready. Create demo accounts only through the intended seed configuration in an appropriate environment; never seed production destructively.
 7. Update the SSLCommerz callback URLs and Google OAuth settings only after the Render URL is known.
 
 Render probes `GET /api/v1/health/ready`. That endpoint runs a database query and returns `503` if the database cannot be reached, so the web service should not be considered ready until its database configuration is valid. `GET /api/v1/health/live` only confirms that the HTTP process is running.
