@@ -36,6 +36,7 @@ export const eventSummarySelect = {
 } satisfies Prisma.EventSelect;
 export const publicEventSelect = {
   id: true,
+  isDemo: true,
   title: true,
   slug: true,
   description: true,

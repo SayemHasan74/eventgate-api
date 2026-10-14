@@ -40,6 +40,7 @@ export const loginWithGoogle = async (identity: VerifiedGoogleIdentity): Promise
           email: true,
           displayName: true,
           role: true,
+          isDemo: true,
           status: true,
           deletedAt: true,
         },
@@ -48,6 +49,12 @@ export const loginWithGoogle = async (identity: VerifiedGoogleIdentity): Promise
   });
 
   if (existingIdentity) {
+    if (existingIdentity.user.isDemo)
+      throw new AppError({
+        statusCode: 403,
+        code: 'DEMO_ACCOUNT_PROTECTED',
+        message: 'Google sign-in is unavailable for shared demo accounts.',
+      });
     assertActiveUser(existingIdentity.user);
     if (existingIdentity.user.email === identity.email)
       await database.user.update({
@@ -155,8 +162,14 @@ export const linkGoogleIdentity = async (
   return database.$transaction(async (transaction) => {
     const account = await transaction.user.findUniqueOrThrow({
       where: { id: user.id },
-      select: { email: true },
+      select: { email: true, isDemo: true },
     });
+    if (account.isDemo)
+      throw new AppError({
+        statusCode: 403,
+        code: 'DEMO_ACCOUNT_PROTECTED',
+        message: 'Google linking is unavailable for shared demo accounts.',
+      });
     if (account.email === identity.email)
       await transaction.user.update({
         where: { id: user.id },

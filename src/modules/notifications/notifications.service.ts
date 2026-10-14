@@ -240,6 +240,8 @@ export async function requestEmailVerification(userId: string) {
     message:
       'If this account is eligible and email is configured, a verification email is queued. Sign in before opening the emailed link.',
   };
+  if ((await getPrisma().user.findUnique({ where: { id: userId }, select: { isDemo: true } }))?.isDemo)
+    return generic;
   if (!emailAvailable()) return generic;
   await serializableTransaction(async (tx) => {
     await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "User" WHERE "id" = ${userId}::uuid FOR UPDATE`);
@@ -289,6 +291,8 @@ export async function requestEmailVerification(userId: string) {
 }
 export async function confirmEmail(userId: string, token: string) {
   return serializableTransaction(async (tx) => {
+    if ((await tx.user.findUnique({ where: { id: userId }, select: { isDemo: true } }))?.isDemo)
+      throw new AppError({ statusCode: 403, code: 'DEMO_ACCOUNT_PROTECTED', message: 'Shared demo account email settings cannot be changed.' });
     const record = await tx.emailVerification.findUnique({
       where: { tokenHash: tokenHash(token) },
     });

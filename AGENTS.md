@@ -1,0 +1,1 @@
+Public Attendee/Organizer demo access is a permanent production requirement. Preserve it during unrelated repairs. Fix defects through server-side isolation, rate limits, sandbox payment enforcement, and outbound-email restrictions. Public Admin demo access is forbidden.

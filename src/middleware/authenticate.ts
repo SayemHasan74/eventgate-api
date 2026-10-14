@@ -28,7 +28,15 @@ export const authenticate = async (
   const claims = await verifyAccessToken(match[1]);
   const user = await getPrisma().user.findUnique({
     where: { id: claims.userId },
-    select: { id: true, email: true, displayName: true, role: true, status: true, deletedAt: true },
+    select: {
+      id: true,
+      email: true,
+      displayName: true,
+      role: true,
+      isDemo: true,
+      status: true,
+      deletedAt: true,
+    },
   });
 
   if (!user || user.status !== UserStatus.ACTIVE || user.deletedAt) {
@@ -45,6 +53,12 @@ export const authenticate = async (
     return;
   }
 
-  request.auth = { id: user.id, email: user.email, displayName: user.displayName, role: user.role };
+  request.auth = {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    role: user.role,
+    isDemo: user.isDemo,
+  };
   next();
 };

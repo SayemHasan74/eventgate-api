@@ -9,6 +9,8 @@ import {
   SslcommerzProviderError,
   assertSslcommerzConfigured,
 } from '../../integrations/sslcommerz/sslcommerz.adapter.js';
+import type { SslcommerzEnvironment } from '../../integrations/sslcommerz/sslcommerz.adapter.js';
+import { env } from '../../config/env.js';
 
 const conflict = (code: string, message: string) =>
   new AppError({ statusCode: 409, code, message, errors: [{ code, message }] });
@@ -47,9 +49,8 @@ export async function initiateCheckout(
   attendeeId: string,
   orderId: string,
   key: string,
-  adapter = new SslcommerzAdapter(),
+  suppliedAdapter?: SslcommerzAdapter,
 ) {
-  assertSslcommerzConfigured();
   const scope = scopeFor(attendeeId);
   const hash = createHash('sha256').update(JSON.stringify({ orderId })).digest('hex');
   const preparation = async () =>
@@ -62,6 +63,9 @@ export async function initiateCheckout(
       });
       if (!order)
         throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Order not found' });
+      if (order.attendee.isDemo !== order.event.isDemo)
+        throw new AppError({ statusCode: 403, code: 'DEMO_EVENT_SCOPE_MISMATCH', message: 'This account cannot pay for tickets in this event catalog.' });
+      const paymentEnvironment: SslcommerzEnvironment = order.event.isDemo ? 'DEMO' : 'LIVE';
       const payable =
         order.status === 'PENDING_PAYMENT' &&
         !order.financialReviewRequired &&
@@ -120,6 +124,7 @@ export async function initiateCheckout(
           'ORDER_NOT_PAYABLE',
           'Only an active reservation with eligible ticket sales can start checkout.',
         );
+      assertSslcommerzConfigured(paymentEnvironment);
       const customer = order.attendee;
       if (
         !customer.phone ||
@@ -142,6 +147,8 @@ export async function initiateCheckout(
           sequence: sequence + 1,
           merchantTransactionId: `eg_${randomUUID().replaceAll('-', '').slice(0, 27)}`,
           amountPaisa: order.totalAmountPaisaSnapshot,
+          paymentEnvironment,
+          merchantIdentity: paymentEnvironment === 'DEMO' ? env.DEMO_SSLCOMMERZ_STORE_ID! : env.SSLCOMMERZ_STORE_ID!,
         },
       });
       await tx.idempotencyRecord.create({
@@ -166,6 +173,7 @@ export async function initiateCheckout(
       return {
         kind: 'new' as const,
         attempt,
+        paymentEnvironment,
         expiresAt: order.reservationExpiresAt,
         productName: `${order.event.title} — ${order.ticketTierNameSnapshot}`.slice(0, 255),
         customer: {
@@ -217,6 +225,7 @@ export async function initiateCheckout(
   const attempt = prepared.attempt;
   try {
     // Exactly one transaction winner reaches external I/O. Never put this in a retry loop.
+    const adapter = suppliedAdapter ?? new SslcommerzAdapter(fetch, prepared.paymentEnvironment, attempt.merchantIdentity);
     const hosted = await adapter.createSession({
       merchantTransactionId: attempt.merchantTransactionId,
       amountPaisa: attempt.amountPaisa,

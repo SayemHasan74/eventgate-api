@@ -33,7 +33,7 @@ export const googleIdTokenSchema = z
   .strict();
 
 export const demoLoginSchema = z
-  .object({ role: z.enum(['ATTENDEE', 'ORGANIZER', 'ADMIN']) })
+  .object({ role: z.enum(['ATTENDEE', 'ORGANIZER']) })
   .strict();
 
 export type RegisterInput = z.infer<typeof registerSchema>;

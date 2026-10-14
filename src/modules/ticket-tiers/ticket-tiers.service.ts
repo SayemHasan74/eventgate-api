@@ -72,6 +72,8 @@ export const createTicketTier = async (
     const event = await lockEvent(tx, actor, eventId);
     if (event.status !== 'DRAFT')
       fail('EVENT_INVENTORY_LOCKED', 'New tiers can only be created on draft events.');
+    if (event.isDemo && (await tx.ticketTier.count({ where: { eventId, deletedAt: null } })) >= 10)
+      fail('DEMO_TIER_LIMIT', 'Demo events are limited to 10 active ticket tiers.');
     assertSalesWindow(input.salesStartAt, input.salesEndAt, event.startAt, true);
     const created = await tx.ticketTier.create({
       data: { ...input, salesPaused: input.salesPaused ?? false, eventId },

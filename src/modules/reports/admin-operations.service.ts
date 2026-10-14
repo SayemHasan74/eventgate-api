@@ -82,15 +82,16 @@ export function jobReference(type: JobType, payload: Prisma.JsonValue) {
 }
 export async function adminSummary(panel: string) {
   const db = getPrisma();
-  if (panel === 'users') return { count: await db.user.count({ where: { deletedAt: null } }) };
+  if (panel === 'users') return { count: await db.user.count({ where: { deletedAt: null, isDemo: false } }) };
   if (panel === 'events')
-    return { count: await db.event.count({ where: { status: 'PUBLISHED', deletedAt: null } }) };
+    return { count: await db.event.count({ where: { status: 'PUBLISHED', deletedAt: null, isDemo: false } }) };
   if (panel === 'refunds')
-    return { count: await db.refund.count({ where: { status: 'REQUESTED' } }) };
+    return { count: await db.refund.count({ where: { status: 'REQUESTED', order: { event: { isDemo: false } } } }) };
   if (panel === 'incidents') {
     const [payments, refunds] = await Promise.all([
       db.paymentAttempt.count({
         where: {
+          order: { event: { isDemo: false } },
           OR: [
             { status: 'UNKNOWN' },
             {
@@ -100,7 +101,7 @@ export async function adminSummary(panel: string) {
           ],
         },
       }),
-      db.refund.count({ where: { OR: [{ status: 'UNKNOWN' }, { needsInvestigation: true }] } }),
+      db.refund.count({ where: { order: { event: { isDemo: false } }, OR: [{ status: 'UNKNOWN' }, { needsInvestigation: true }] } }),
     ]);
     return { payments, refunds };
   }
