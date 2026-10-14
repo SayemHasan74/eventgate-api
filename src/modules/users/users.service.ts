@@ -23,7 +23,6 @@ export const userSummarySelect = {
   postalCode: true,
   country: true,
   role: true,
-  isDemo: true,
   status: true,
   createdAt: true,
   emailVerifiedAt: true,
@@ -83,16 +82,6 @@ export const getProfile = async (userId: string) => {
 };
 
 export const updateProfile = async (userId: string, input: ProfileInput) => {
-  const user = await getPrisma().user.findUnique({
-    where: { id: userId },
-    select: { isDemo: true },
-  });
-  if (user?.isDemo)
-    throw new AppError({
-      statusCode: 403,
-      code: 'DEMO_ACCOUNT_PROTECTED',
-      message: 'Shared demo accounts cannot change profile or contact details.',
-    });
   await getPrisma().user.update({
     where: { id: userId },
     data: Object.fromEntries(

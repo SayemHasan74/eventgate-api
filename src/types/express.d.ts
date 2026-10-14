@@ -9,7 +9,6 @@ declare global {
         email: string;
         displayName: string;
         role: UserRole;
-        isDemo: boolean;
       };
     }
   }

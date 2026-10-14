@@ -15,10 +15,10 @@ import { closeEventWaitlists } from '../waitlists/waitlists.service.js';
 
 type Actor = Express.Request['auth'];
 export const currentOrganizer = async (tx: Prisma.TransactionClient, id: string) => {
-  await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "User" WHERE "id" = ${id}::uuid FOR UPDATE`);
+  await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "User" WHERE "id" = ${id}::uuid FOR SHARE`);
   const user = await tx.user.findUnique({
     where: { id },
-    select: { id: true, role: true, status: true, email: true, displayName: true, isDemo: true },
+    select: { id: true, role: true, status: true, email: true, displayName: true },
   });
   if (
     !user ||
@@ -30,7 +30,7 @@ export const currentOrganizer = async (tx: Prisma.TransactionClient, id: string)
       code: 'FORBIDDEN',
       message: 'Active organizer access required.',
     });
-  return { id: user.id, role: user.role, email: user.email, displayName: user.displayName, isDemo: user.isDemo };
+  return { id: user.id, role: user.role, email: user.email, displayName: user.displayName };
 };
 
 const eventNotFound = (): AppError =>
@@ -62,7 +62,6 @@ export const findOwnedEvent = async (
       id: eventId,
       deletedAt: null,
       ...(actor.role === UserRole.ADMIN ? {} : { organizerId: actor.id }),
-      ...(actor.role === UserRole.ADMIN ? {} : { isDemo: actor.isDemo }),
     },
   });
   if (!event) throw eventNotFound();
@@ -74,7 +73,7 @@ export const listManagedEvents = async (actor: Actor, query: ManagedEventQuery) 
   const base =
     actor.role === UserRole.ADMIN
       ? { deletedAt: null }
-      : { organizerId: actor.id, deletedAt: null, isDemo: actor.isDemo };
+      : { organizerId: actor.id, deletedAt: null };
   const where = {
     ...base,
     ...(actor.role === UserRole.ADMIN && query.organizerId
@@ -107,7 +106,6 @@ export const getManagedEvent = async (actor: Actor, eventId: string, includeDele
       id: eventId,
       ...(!includeDeleted ? { deletedAt: null } : {}),
       ...(actor.role === 'ADMIN' ? {} : { organizerId: actor.id }),
-      ...(actor.role === 'ADMIN' ? {} : { isDemo: actor.isDemo }),
     },
     include: {
       organizer: { select: { id: true, displayName: true } },
@@ -163,15 +161,10 @@ export const getManagedEvent = async (actor: Actor, eventId: string, includeDele
 export const createEvent = async (actorId: string, input: CreateEventInput) => {
   if (input.startAt <= new Date()) throw invalidDate('Event must start in the future');
   const event = await serializableTransaction(async (tx) => {
-    const organizer = await currentOrganizer(tx, actorId);
-    if (organizer.isDemo) {
-      const upcoming = await tx.event.count({ where: { organizerId: actorId, isDemo: true, deletedAt: null, startAt: { gt: new Date() }, status: { in: ['DRAFT', 'PUBLISHED'] } } });
-      if (upcoming >= 10)
-        throw conflict('DEMO_EVENT_LIMIT', 'Demo event limit reached', 'The shared demo organizer may have at most 10 upcoming events.');
-    }
+    await currentOrganizer(tx, actorId);
     if (input.startAt <= new Date()) throw invalidDate('Event must start in the future');
     const event = await tx.event.create({
-      data: { ...input, imageUrl: input.imageUrl ?? null, organizerId: actorId, isDemo: organizer.isDemo },
+      data: { ...input, imageUrl: input.imageUrl ?? null, organizerId: actorId },
     });
     await tx.auditLog.create({
       data: { actorId, action: 'EVENT_CREATED', entityType: 'EVENT', entityId: event.id },

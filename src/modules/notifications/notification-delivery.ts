@@ -101,7 +101,6 @@ export async function deliverNotification(id: string, adapter = sendEmail) {
         (await waitlistAlertStillRelevant(tx, user.id, delivery.notification.sourceKey))) &&
       reminderEligible &&
       user.status === 'ACTIVE' &&
-      !user.isDemo &&
       !user.deletedAt &&
       (!delivery.recipient || delivery.recipient === user.email) &&
       (delivery.verification

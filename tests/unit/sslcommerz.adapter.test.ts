@@ -8,13 +8,11 @@ const configuredEnvironment = vi.hoisted(() => ({
   SSLCOMMERZ_FAIL_URL: 'https://example.com/fail',
   SSLCOMMERZ_CANCEL_URL: 'https://example.com/cancel',
   SSLCOMMERZ_IPN_URL: 'https://example.com/ipn',
-  DEMO_SSLCOMMERZ_STORE_ID: 'demo-store',
-  DEMO_SSLCOMMERZ_STORE_PASSWORD: 'demo-password',
 }));
 
 vi.mock('../../src/config/env.js', () => ({ env: configuredEnvironment }));
 
-const { SslcommerzAdapter, assertSslcommerzConfigured } =
+const { SslcommerzAdapter } =
   await import('../../src/integrations/sslcommerz/sslcommerz.adapter.js');
 
 const request = {
@@ -33,27 +31,6 @@ const request = {
 };
 
 describe('SSLCommerz session adapter', () => {
-  it('uses the dedicated sandbox merchant for demo attempts even when live checkout is configured', async () => {
-    const fetcher = vi.fn().mockResolvedValue(Response.json({
-      status: 'SUCCESS',
-      sessionkey: 'demo-session',
-      GatewayPageURL: 'https://sandbox.sslcommerz.com/checkout',
-    }));
-    expect(() => assertSslcommerzConfigured('DEMO')).not.toThrow();
-    await new SslcommerzAdapter(fetcher, 'DEMO', 'demo-store').createSession(request);
-    expect(fetcher.mock.calls[0]?.[0]).toBe('https://sandbox.sslcommerz.com/gwprocess/v4/api.php');
-    const form = fetcher.mock.calls[0]?.[1]?.body as URLSearchParams;
-    expect(form.get('store_id')).toBe('demo-store');
-    expect(form.get('store_passwd')).toBe('demo-password');
-  });
-
-  it('refuses a payment attempt when the configured merchant no longer matches its persisted identity', async () => {
-    const adapter = new SslcommerzAdapter(vi.fn(), 'DEMO', 'old-demo-store');
-    await expect(adapter.createSession(request)).rejects.toMatchObject({
-      code: 'PAYMENT_MERCHANT_CONFIGURATION_MISMATCH',
-    });
-  });
-
   it.each([
     'http://sandbox.sslcommerz.com/checkout',
     'https://attacker.test/checkout',

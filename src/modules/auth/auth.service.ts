@@ -18,22 +18,20 @@ export type PublicUser = {
   email: string;
   displayName: string;
   role: UserRole;
-  isDemo?: boolean;
 };
 
 export type AuthResult = {
-  user: PublicUser & { isDemo: boolean };
+  user: PublicUser;
   accessToken: string;
   refreshToken: string;
   accessTokenExpiresIn: number;
 };
 
-const toPublicUser = (user: PublicUser): AuthResult['user'] => ({
+const toPublicUser = (user: PublicUser): PublicUser => ({
   id: user.id,
   email: user.email,
   displayName: user.displayName,
   role: user.role,
-  isDemo: user.isDemo ?? false,
 });
 
 export const createAuthResult = async (
@@ -99,7 +97,7 @@ export const register = async (input: RegisterInput): Promise<AuthResult> => {
           passwordHash,
           role: UserRole.ATTENDEE,
         },
-        select: { id: true, email: true, displayName: true, role: true, isDemo: true },
+        select: { id: true, email: true, displayName: true, role: true },
       });
 
       await transaction.refreshSession.create({
@@ -156,7 +154,6 @@ export const login = async (input: LoginInput): Promise<AuthResult> => {
       email: true,
       displayName: true,
       role: true,
-      isDemo: true,
       status: true,
       deletedAt: true,
       passwordHash: true,
@@ -177,7 +174,10 @@ export const login = async (input: LoginInput): Promise<AuthResult> => {
 };
 
 export const loginDemo = async ({ role }: DemoLoginInput): Promise<AuthResult> => {
-  if (env.PUBLIC_DEMO_ENABLED !== 'true') {
+  if (
+    env.DEMO_LOGIN_ENABLED !== 'true' ||
+    (env.NODE_ENV === 'production' && env.DEMO_ENVIRONMENT !== 'true')
+  ) {
     throw new AppError({
       statusCode: 404,
       code: 'DEMO_LOGIN_DISABLED',
@@ -187,8 +187,9 @@ export const loginDemo = async ({ role }: DemoLoginInput): Promise<AuthResult> =
   }
 
   const emailByRole: Record<DemoLoginInput['role'], string | undefined> = {
-    ATTENDEE: env.DEMO_ATTENDEE_EMAIL,
-    ORGANIZER: env.DEMO_ORGANIZER_EMAIL,
+    ATTENDEE: env.SEED_ATTENDEE_EMAIL,
+    ORGANIZER: env.SEED_ORGANIZER_EMAIL,
+    ADMIN: env.SEED_ADMIN_EMAIL,
   };
   const email = emailByRole[role];
   if (!email) {
@@ -202,18 +203,9 @@ export const loginDemo = async ({ role }: DemoLoginInput): Promise<AuthResult> =
 
   const user = await getPrisma().user.findUnique({
     where: { email },
-      select: {
-        id: true,
-        email: true,
-        displayName: true,
-        role: true,
-        isDemo: true,
-        status: true,
-        deletedAt: true,
-      },
+    select: { id: true, email: true, displayName: true, role: true, status: true, deletedAt: true },
   });
-  if (!user || !user.isDemo || user.role !== role || user.email !== email.toLowerCase())
-    throw invalidCredentials();
+  if (!user || user.role !== role) throw invalidCredentials();
   assertActiveUser(user);
   return createSessionForUser(user, 'AUTH_DEMO_LOGGED_IN', { method: 'demo', role });
 };
@@ -234,7 +226,6 @@ export const createSessionForUser = async (
         email: true,
         displayName: true,
         role: true,
-        isDemo: true,
         status: true,
         deletedAt: true,
       },

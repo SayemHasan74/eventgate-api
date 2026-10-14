@@ -13,8 +13,8 @@ publicEventsRouter.get('/', validate({ query: discoveryQuerySchema }), readPubli
 publicEventsRouter.get(
   '/facets',
   validate({ query: emptyQuerySchema }),
-    async (request, response) =>
-    sendSuccess(response, 200, 'Event facets retrieved', await getEventFacets(request.baseUrl.endsWith('/demo/events'))),
+  async (_request, response) =>
+    sendSuccess(response, 200, 'Event facets retrieved', await getEventFacets()),
 );
 publicEventsRouter.get(
   '/:slug/availability',
@@ -25,7 +25,7 @@ publicEventsRouter.get(
       response,
       200,
       'Availability retrieved',
-      await getPublicAvailability(request.params.slug as string, request.baseUrl.endsWith('/demo/events')),
+      await getPublicAvailability(request.params.slug as string),
     );
   },
 );

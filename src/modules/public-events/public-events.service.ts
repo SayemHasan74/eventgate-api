@@ -26,7 +26,6 @@ export const publicProjection = (
   event: NonNullable<Awaited<ReturnType<typeof findPublicEvent>>>,
 ) => ({
   id: event.id,
-  isDemo: event.isDemo,
   title: event.title,
   slug: event.slug,
   description: event.description,
@@ -50,20 +49,19 @@ export const publicProjection = (
   })),
 });
 
-export const discoverEvents = async (query: DiscoveryQuery, isDemo = false) => {
-  const key = cacheKey(isDemo ? 'demo-list' : 'normal-list', query);
+export const discoverEvents = async (query: DiscoveryQuery) => {
+  const key = cacheKey('list', query);
   const cached = await readDiscoveryCache<Awaited<ReturnType<typeof queryEvents>>>(key);
   if (cached) return cached;
-  const result = await queryEvents(query, isDemo);
+  const result = await queryEvents(query);
   await writeDiscoveryCache(key, result);
   return result;
 };
 
-const queryEvents = async (query: DiscoveryQuery, isDemo: boolean) => {
+const queryEvents = async (query: DiscoveryQuery) => {
   const where: Prisma.EventWhereInput = {
     status: EventStatus.PUBLISHED,
     deletedAt: null,
-    isDemo,
     ...(query.category ? { category: { equals: query.category, mode: 'insensitive' } } : {}),
     ...(query.city ? { city: { equals: query.city, mode: 'insensitive' } } : {}),
     ...(query.startAfter || query.startBefore
@@ -123,11 +121,11 @@ const queryEvents = async (query: DiscoveryQuery, isDemo: boolean) => {
   };
 };
 
-export const getPublicEvent = async (slug: string, isDemo = false) => {
-  const key = cacheKey(isDemo ? 'demo-detail' : 'normal-detail', slug);
+export const getPublicEvent = async (slug: string) => {
+  const key = cacheKey('detail', slug);
   const cached = await readDiscoveryCache<ReturnType<typeof publicProjection>>(key);
   if (cached) return cached;
-  const event = await findPublicEvent(slug, isDemo);
+  const event = await findPublicEvent(slug);
   if (!event) {
     throw new AppError({
       statusCode: 404,
@@ -141,9 +139,9 @@ export const getPublicEvent = async (slug: string, isDemo = false) => {
   return result;
 };
 
-const findPublicEvent = (slug: string, isDemo = false) =>
+const findPublicEvent = (slug: string) =>
   getPrisma().event.findFirst({
-    where: { slug, status: EventStatus.PUBLISHED, deletedAt: null, isDemo },
+    where: { slug, status: EventStatus.PUBLISHED, deletedAt: null },
     select: {
       ...publicEventSelect,
       ticketTiers: {
@@ -154,11 +152,11 @@ const findPublicEvent = (slug: string, isDemo = false) =>
     },
   });
 
-export const getEventFacets = async (isDemo = false) => {
-  const key = `safe-v2:${isDemo ? 'demo-' : ''}facets`;
+export const getEventFacets = async () => {
+  const key = 'safe-v2:facets';
   const cached = await readDiscoveryCache<{ categories: string[]; cities: string[] }>(key);
   if (cached) return cached;
-  const where = { status: EventStatus.PUBLISHED, deletedAt: null, isDemo };
+  const where = { status: EventStatus.PUBLISHED, deletedAt: null };
   const [categories, cities] = await Promise.all([
     getPrisma().event.groupBy({ by: ['category'], where, orderBy: { category: 'asc' } }),
     getPrisma().event.groupBy({ by: ['city'], where, orderBy: { city: 'asc' } }),
@@ -171,8 +169,8 @@ export const getEventFacets = async (isDemo = false) => {
   return result;
 };
 
-export const getPublicAvailability = async (slug: string, isDemo = false) => {
-  const event = await findPublicEvent(slug, isDemo);
+export const getPublicAvailability = async (slug: string) => {
+  const event = await findPublicEvent(slug);
   if (!event)
     throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Event not found.' });
   const serverTime = new Date();

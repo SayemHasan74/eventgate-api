@@ -212,14 +212,9 @@ export async function reviewRefund(adminId: string, refundId: string, input: Rev
 
 export async function startRefund(
   refundId: string,
-  suppliedAdapter?: SslcommerzAdapter,
+  adapter = new SslcommerzAdapter(),
 ): Promise<void> {
-  const initial = await getPrisma().refund.findUnique({ where: { id: refundId }, include: { paymentAttempt: true } });
-  const initialAttempt = initial?.paymentAttempt;
-  if (initialAttempt && !suppliedAdapter) assertSslcommerzConfigured(initialAttempt.paymentEnvironment);
-  const configuredAdapter = initialAttempt && !suppliedAdapter
-    ? new SslcommerzAdapter(fetch, initialAttempt.paymentEnvironment, initialAttempt.merchantIdentity)
-    : suppliedAdapter;
+  assertSslcommerzConfigured();
   const claimed = await serializableTransaction(async (tx) => {
     const found = await lockedRefund(tx, refundId);
     if (!['APPROVED', 'FAILED'].includes(found.status)) return null;
@@ -270,10 +265,6 @@ export async function startRefund(
   });
   if (!claimed) return;
   try {
-    const attempt = claimed.paymentAttempt;
-    if (!attempt) throw financialConflict('REFUND_REQUIRES_INVESTIGATION', 'Payment attempt is missing.');
-    const adapter = configuredAdapter;
-    if (!adapter) throw financialConflict('REFUND_REQUIRES_INVESTIGATION', 'Payment gateway identity is missing.');
     const result = await adapter.initiateRefund({
       bankTransactionId: claimed.bankTransactionId,
       refundTransactionId: `rf_${claimed.id.replaceAll('-', '').slice(0, 26)}`,
@@ -334,11 +325,11 @@ export async function startRefund(
 
 export async function reconcileRefund(
   refundId: string,
-  suppliedAdapter?: SslcommerzAdapter,
+  adapter = new SslcommerzAdapter(),
 ): Promise<void> {
   const refund = await getPrisma().refund.findUnique({ where: { id: refundId } });
   if (!refund) return;
-  if (refund.status === 'APPROVED') return startRefund(refund.id, suppliedAdapter);
+  if (refund.status === 'APPROVED') return startRefund(refund.id, adapter);
   if (!['PROCESSING', 'UNKNOWN'].includes(refund.status)) return;
   if (refund.needsInvestigation && refund.providerRefundId)
     throw financialConflict(
@@ -364,17 +355,18 @@ export async function reconcileRefund(
       'Provider reference is required to reconcile this refund.',
     );
   }
-  const captureIdentity = refund.paymentAttemptId
-    ? await getPrisma().paymentAttempt.findUnique({
-        where: { id: refund.paymentAttemptId },
-        select: { providerTransactionId: true, paymentEnvironment: true, merchantIdentity: true },
-      })
-    : null;
-  if (!captureIdentity?.providerTransactionId)
-    throw financialConflict('REFUND_REQUIRES_INVESTIGATION', 'Verified capture identity is missing.');
-  if (!suppliedAdapter) assertSslcommerzConfigured(captureIdentity.paymentEnvironment);
-  const adapter = suppliedAdapter ?? new SslcommerzAdapter(fetch, captureIdentity.paymentEnvironment, captureIdentity.merchantIdentity);
   try {
+    const captureIdentity = refund.paymentAttemptId
+      ? await getPrisma().paymentAttempt.findUnique({
+          where: { id: refund.paymentAttemptId },
+          select: { providerTransactionId: true },
+        })
+      : null;
+    if (!captureIdentity?.providerTransactionId)
+      throw financialConflict(
+        'REFUND_REQUIRES_INVESTIGATION',
+        'Verified capture identity is missing.',
+      );
     const status = await adapter.getRefundStatus(
       refund.providerRefundId,
       captureIdentity.providerTransactionId,

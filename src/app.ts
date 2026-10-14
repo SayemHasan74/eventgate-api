@@ -84,7 +84,6 @@ app.use('/api/v1/saved-events', savedEventsRouter);
 app.use('/api/v1', notificationAccountRouter);
 app.use('/api/v1', recommendationsRouter);
 app.use('/api/v1/events', publicEventsRouter);
-app.use('/api/v1/demo/events', publicEventsRouter);
 app.use('/api/v1', waitlistsRouter);
 app.use('/api/v1/orders', ordersRouter);
 app.use('/api/v1', attendeeRefundsRouter);

@@ -34,18 +34,3 @@ export const authRateLimiter = rateLimit({
     ]);
   },
 });
-
-export const publicDemoRateLimiter = rateLimit({
-  ...sharedOptions,
-  windowMs: 15 * 60 * 1000,
-  limit: env.PUBLIC_DEMO_RATE_LIMIT_MAX,
-  identifier: 'public-demo-access',
-  handler: (_request, response) => {
-    sendError(response, 429, 'Too many demo access attempts', [
-      {
-        code: 'DEMO_RATE_LIMITED',
-        message: 'Demo access is temporarily rate-limited. Please try again later.',
-      },
-    ]);
-  },
-});

@@ -4,13 +4,13 @@ import { AppError } from '../../shared/errors/app-error.js';
 import { dateRange } from '../../shared/responses/read-contracts.js';
 import type { EventReportOrdersQuery, EventReportQuery } from './reports.schemas.js';
 
-type Actor = { id: string; role: UserRole; isDemo?: boolean };
+type Actor = { id: string; role: UserRole };
 export async function reportAccess(actor: Actor, eventId: string) {
   const event = await getPrisma().event.findUnique({
     where: { id: eventId },
-    select: { id: true, organizerId: true, isDemo: true },
+    select: { id: true, organizerId: true },
   });
-  if (!event || (actor.role !== UserRole.ADMIN && (event.organizerId !== actor.id || event.isDemo !== actor.isDemo)))
+  if (!event || (actor.role !== UserRole.ADMIN && event.organizerId !== actor.id))
     throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Event not found.' });
 }
 export function reportOrderWhere(eventId: string, query: EventReportQuery): Prisma.OrderWhereInput {
@@ -44,7 +44,6 @@ export const canonicalSalesSql = (
     FROM "Refund" WHERE "paymentAttemptId" = p."id"
   ) r ON TRUE
   WHERE ${sqlOrderScope(eventId, query)} AND o."paidAt" IS NOT NULL
-    ${eventId ? Prisma.empty : Prisma.sql`AND o."eventId" IN (SELECT id FROM "Event" WHERE "isDemo" = false)`}
     AND p."status" = 'SUCCEEDED' AND p."providerTransactionId" IS NOT NULL
     AND p."replayOfAttemptId" IS NULL ${sqlDates(Prisma.sql`o."paidAt"`, query)}`;
 

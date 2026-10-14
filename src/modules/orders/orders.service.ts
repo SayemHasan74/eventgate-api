@@ -123,9 +123,6 @@ export const createOrder = async (
             Prisma.sql`SELECT "id" FROM "TicketTier" WHERE "id" = ${input.ticketTierId}::uuid FOR UPDATE`,
           );
         }
-        await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "User" WHERE "id" = ${attendeeId}::uuid FOR UPDATE`);
-        const attendee = await tx.user.findUnique({ where: { id: attendeeId }, select: { isDemo: true, role: true } });
-        if (!attendee || attendee.role !== 'ATTENDEE') throw notFound();
         const tier = await tx.ticketTier.findFirst({
           where: { id: input.ticketTierId, deletedAt: null },
           include: { event: true },
@@ -142,13 +139,6 @@ export const createOrder = async (
             'Choose a published event with an active ticket tier.',
           );
         }
-        if (attendee.isDemo !== tier.event.isDemo)
-          throw new AppError({ statusCode: 403, code: 'DEMO_EVENT_SCOPE_MISMATCH', message: 'This account can only reserve tickets in its own event catalog.' });
-        if (attendee.isDemo) {
-          const activeUnpaid = await tx.order.count({ where: { attendeeId, status: 'PENDING_PAYMENT', reservationExpiresAt: { gt: new Date() } } });
-          if (activeUnpaid >= 5)
-            throw conflict('DEMO_RESERVATION_LIMIT', 'Demo reservation limit reached', 'Complete or let an active reservation expire before reserving another ticket.');
-        }
 
         const reservation = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
           UPDATE "TicketTier" AS tier
@@ -158,7 +148,6 @@ export const createOrder = async (
             AND event."id" = tier."eventId"
             AND event."status" = 'PUBLISHED'
             AND event."deletedAt" IS NULL
-            AND event."isDemo" = ${attendee.isDemo}
             AND event."startAt" > clock_timestamp()
             AND tier."deletedAt" IS NULL
             AND NOT tier."salesPaused"

@@ -272,7 +272,7 @@ export const fulfillValidatedPayment = async (
 export const processSslcommerzCallback = async (
   type: CallbackType,
   payload: SslcommerzCallback,
-  adapter?: SslcommerzAdapter,
+  adapter = new SslcommerzAdapter(),
   deferVerification = false,
 ): Promise<{ accepted: true }> => {
   const event = await getPrisma().$transaction(async (tx) => {
@@ -302,7 +302,7 @@ export const processSslcommerzCallback = async (
   return { accepted: true };
 };
 
-export const processPaymentEvent = async (eventId: string, suppliedAdapter?: SslcommerzAdapter) => {
+export const processPaymentEvent = async (eventId: string, adapter = new SslcommerzAdapter()) => {
   const event = await getPrisma().paymentEvent.findUnique({ where: { id: eventId } });
   if (!event) return;
   const payload = event.payload as SslcommerzCallback;
@@ -331,7 +331,6 @@ export const processPaymentEvent = async (eventId: string, suppliedAdapter?: Ssl
     });
     return { accepted: true };
   }
-  const adapter = suppliedAdapter ?? new SslcommerzAdapter(fetch, attempt.paymentEnvironment, attempt.merchantIdentity);
   await getPrisma().paymentEvent.update({
     where: { id: event.id },
     data: { paymentAttemptId: attempt.id },
@@ -384,11 +383,10 @@ export const processPaymentEvent = async (eventId: string, suppliedAdapter?: Ssl
 /** Used by the durable worker for a callback whose verification response was uncertain. */
 export const reconcilePaymentAttempt = async (
   paymentAttemptId: string,
-  suppliedAdapter?: SslcommerzAdapter,
+  adapter = new SslcommerzAdapter(),
 ): Promise<void> => {
   const attempt = await getPrisma().paymentAttempt.findUnique({ where: { id: paymentAttemptId } });
   if (!attempt || !['UNKNOWN', 'INITIATING', 'PENDING'].includes(attempt.status)) return;
-  const adapter = suppliedAdapter ?? new SslcommerzAdapter(fetch, attempt.paymentEnvironment, attempt.merchantIdentity);
   const callback = await getPrisma().paymentEvent.findFirst({
     where: { paymentAttemptId, processedAt: null },
     orderBy: { receivedAt: 'desc' },

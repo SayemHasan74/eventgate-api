@@ -45,9 +45,6 @@ export async function waitlistMembership(
   });
   if (!tier)
     throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Ticket tier not found.' });
-  const attendee = await db.user.findUnique({ where: { id: userId }, select: { isDemo: true } });
-  if (!attendee || attendee.isDemo !== tier.event.isDemo)
-    throw new AppError({ statusCode: 403, code: 'DEMO_EVENT_SCOPE_MISMATCH', message: 'This account cannot access stock alerts for that event catalog.' });
   const [entry, count] = await Promise.all([
     db.waitlistEntry.findUnique({
       where: { userId_ticketTierId: { userId, ticketTierId: tierId } },
@@ -75,7 +72,7 @@ async function lockMembership(
   );
   const user = await tx.user.findUnique({
     where: { id: userId },
-    select: { role: true, status: true, deletedAt: true, isDemo: true },
+    select: { role: true, status: true, deletedAt: true },
   });
   if (!user || user.role !== 'ATTENDEE' || user.status !== 'ACTIVE' || user.deletedAt)
     throw new AppError({
@@ -83,9 +80,6 @@ async function lockMembership(
       code: 'FORBIDDEN',
       message: 'An active attendee account is required.',
     });
-  const event = await tx.event.findUnique({ where: { id: eventId }, select: { isDemo: true } });
-  if (!event || user.isDemo !== event.isDemo)
-    throw new AppError({ statusCode: 403, code: 'DEMO_EVENT_SCOPE_MISMATCH', message: 'This account cannot access stock alerts for that event catalog.' });
 }
 export async function joinWaitlist(userId: string, eventId: string, tierId: string) {
   return serializableTransaction(async (tx) => {

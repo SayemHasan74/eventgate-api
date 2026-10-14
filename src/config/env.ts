@@ -38,12 +38,8 @@ const environmentSchema = z.object({
   EMAIL_FROM: z.string().min(1).max(320).optional(),
   EMAIL_VERIFICATION_SECRET: z.string().min(32).optional(),
   FRONTEND_URL: z.string().url().default('https://eventgate-frontend-lovat.vercel.app'),
-  PUBLIC_DEMO_ENABLED: z.enum(['true', 'false']).default('false'),
-  PUBLIC_DEMO_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(100).default(10),
-  DEMO_ATTENDEE_EMAIL: z.string().trim().toLowerCase().email().optional(),
-  DEMO_ATTENDEE_PASSWORD: z.string().min(12).optional(),
-  DEMO_ORGANIZER_EMAIL: z.string().trim().toLowerCase().email().optional(),
-  DEMO_ORGANIZER_PASSWORD: z.string().min(12).optional(),
+  DEMO_LOGIN_ENABLED: z.enum(['true', 'false']).default('false'),
+  DEMO_ENVIRONMENT: z.enum(['true', 'false']).default('false'),
   SEED_ATTENDEE_EMAIL: z.string().email().optional(),
   SEED_ORGANIZER_EMAIL: z.string().email().optional(),
   SEED_ADMIN_EMAIL: z.string().email().optional(),
@@ -54,8 +50,6 @@ const environmentSchema = z.object({
   SSLCOMMERZ_FAIL_URL: z.string().url().optional(),
   SSLCOMMERZ_CANCEL_URL: z.string().url().optional(),
   SSLCOMMERZ_IPN_URL: z.string().url().optional(),
-  DEMO_SSLCOMMERZ_STORE_ID: z.string().min(1).optional(),
-  DEMO_SSLCOMMERZ_STORE_PASSWORD: z.string().min(1).optional(),
 });
 
 const parsedEnvironment = environmentSchema.safeParse(process.env);

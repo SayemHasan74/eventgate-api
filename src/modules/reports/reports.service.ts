@@ -19,23 +19,20 @@ export const eventStatistics = async (
 export const platformStatistics = async () => {
   const database = getPrisma();
   const [users, events, orders, payments, refunds] = await Promise.all([
-    database.user.groupBy({ by: ['role'], where: { isDemo: false }, _count: { _all: true } }),
-    database.event.groupBy({ by: ['status'], where: { isDemo: false }, _count: { _all: true } }),
+    database.user.groupBy({ by: ['role'], _count: { _all: true } }),
+    database.event.groupBy({ by: ['status'], _count: { _all: true } }),
     database.order.groupBy({
       by: ['status'],
-      where: { event: { isDemo: false } },
       _count: { _all: true },
       _sum: { totalAmountPaisaSnapshot: true },
     }),
     database.paymentAttempt.groupBy({
       by: ['status'],
-      where: { order: { event: { isDemo: false } } },
       _count: { _all: true },
       _sum: { amountPaisa: true },
     }),
     database.refund.groupBy({
       by: ['status'],
-      where: { order: { event: { isDemo: false } } },
       _count: { _all: true },
       _sum: { amountPaisa: true },
     }),

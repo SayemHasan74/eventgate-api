@@ -1,7 +1,7 @@
 import { Router } from 'express';
 
 import { authenticate } from '../../middleware/authenticate.js';
-import { authRateLimiter, publicDemoRateLimiter } from '../../shared/security/rate-limit.js';
+import { authRateLimiter } from '../../shared/security/rate-limit.js';
 import { validate } from '../../middleware/validate.js';
 import {
   loginController,
@@ -27,12 +27,7 @@ const authRouter = Router();
 authRouter.use(authRateLimiter);
 authRouter.post('/register', validate({ body: registerSchema }), registerController);
 authRouter.post('/login', validate({ body: loginSchema }), loginController);
-authRouter.post(
-  '/demo',
-  publicDemoRateLimiter,
-  validate({ body: demoLoginSchema }),
-  demoLoginController,
-);
+authRouter.post('/demo', validate({ body: demoLoginSchema }), demoLoginController);
 authRouter.get('/google/config', googleConfigController);
 authRouter.post('/google', validate({ body: googleIdTokenSchema }), googleLoginController);
 authRouter.post(

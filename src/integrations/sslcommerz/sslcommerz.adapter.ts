@@ -29,7 +29,7 @@ export type SslcommerzSessionRequest = {
 
 export type SslcommerzSession = { sessionKey: string; gatewayUrl: string };
 
-const trustedCheckoutUrl = (value: string, live: boolean): boolean => {
+const trustedCheckoutUrl = (value: string): boolean => {
   try {
     const url = new URL(value);
     return (
@@ -39,7 +39,7 @@ const trustedCheckoutUrl = (value: string, live: boolean): boolean => {
       !url.password &&
       !url.hash &&
       url.hostname ===
-        (live
+        (env.SSLCOMMERZ_IS_LIVE === 'true'
           ? 'securepay.sslcommerz.com'
           : 'sandbox.sslcommerz.com') &&
       ![...url.searchParams.keys()].some((key) =>
@@ -78,18 +78,10 @@ export class SslcommerzProviderError extends Error {
   }
 }
 
-export type SslcommerzEnvironment = 'LIVE' | 'DEMO';
-
-const credentialsFor = (environment: SslcommerzEnvironment) =>
-  environment === 'DEMO'
-    ? { storeId: env.DEMO_SSLCOMMERZ_STORE_ID, password: env.DEMO_SSLCOMMERZ_STORE_PASSWORD, live: false }
-    : { storeId: env.SSLCOMMERZ_STORE_ID, password: env.SSLCOMMERZ_STORE_PASSWORD, live: env.SSLCOMMERZ_IS_LIVE === 'true' };
-
-export const assertSslcommerzConfigured = (environment: SslcommerzEnvironment = 'LIVE'): void => {
-  const credentials = credentialsFor(environment);
+export const assertSslcommerzConfigured = (): void => {
   const required = [
-    credentials.storeId,
-    credentials.password,
+    env.SSLCOMMERZ_STORE_ID,
+    env.SSLCOMMERZ_STORE_PASSWORD,
     env.SSLCOMMERZ_SUCCESS_URL,
     env.SSLCOMMERZ_FAIL_URL,
     env.SSLCOMMERZ_CANCEL_URL,
@@ -103,9 +95,7 @@ export const assertSslcommerzConfigured = (environment: SslcommerzEnvironment = 
       errors: [
         {
           code: 'PAYMENT_CONFIGURATION_ERROR',
-          message: environment === 'DEMO'
-            ? 'Configure separate demo SSLCommerz sandbox credentials before enabling demo checkout.'
-            : 'Configure SSLCommerz credentials and callback URLs.',
+          message: 'Configure SSLCommerz credentials and callback URLs.',
         },
       ],
     });
@@ -113,18 +103,7 @@ export const assertSslcommerzConfigured = (environment: SslcommerzEnvironment = 
 };
 
 export class SslcommerzAdapter {
-  public constructor(
-    private readonly fetcher: Fetcher = fetch,
-    private readonly paymentEnvironment: SslcommerzEnvironment = 'LIVE',
-    private readonly expectedMerchantIdentity?: string | null,
-  ) {}
-
-  private get credentials() {
-    const credentials = credentialsFor(this.paymentEnvironment);
-    if (this.expectedMerchantIdentity && credentials.storeId !== this.expectedMerchantIdentity)
-      throw new AppError({ statusCode: 503, code: 'PAYMENT_MERCHANT_CONFIGURATION_MISMATCH', message: 'The configured payment merchant does not match this payment attempt.' });
-    return credentials;
-  }
+  public constructor(private readonly fetcher: Fetcher = fetch) {}
 
   public async lookupTransaction(input: {
     merchantTransactionId: string;
@@ -132,11 +111,10 @@ export class SslcommerzAdapter {
   }): Promise<
     { status: 'CAPTURED'; validationId: string } | { status: 'FAILED' | 'PENDING' | 'UNKNOWN' }
   > {
-    assertSslcommerzConfigured(this.paymentEnvironment);
-    const credentials = this.credentials;
+    assertSslcommerzConfigured();
     const query = new URLSearchParams({
-      store_id: credentials.storeId!,
-      store_passwd: credentials.password!,
+      store_id: env.SSLCOMMERZ_STORE_ID!,
+      store_passwd: env.SSLCOMMERZ_STORE_PASSWORD!,
       format: 'json',
       ...(input.sessionKey
         ? { sessionkey: input.sessionKey }
@@ -144,7 +122,7 @@ export class SslcommerzAdapter {
     });
     // Official session/merchant query API. Absence of a transaction is NOT evidence of failure.
     const response = await this.fetcher(
-      `${refundEndpoint(credentials.live)}?${query}`,
+      `${refundEndpoint(env.SSLCOMMERZ_IS_LIVE === 'true')}?${query}`,
       {
         signal: AbortSignal.timeout(15000),
       },
@@ -181,11 +159,10 @@ export class SslcommerzAdapter {
   }
 
   public async createSession(input: SslcommerzSessionRequest): Promise<SslcommerzSession> {
-    assertSslcommerzConfigured(this.paymentEnvironment);
-    const credentials = this.credentials;
+    assertSslcommerzConfigured();
     const body = new URLSearchParams({
-      store_id: credentials.storeId!,
-      store_passwd: credentials.password!,
+      store_id: env.SSLCOMMERZ_STORE_ID!,
+      store_passwd: env.SSLCOMMERZ_STORE_PASSWORD!,
       total_amount: (input.amountPaisa / 100).toFixed(2),
       currency: 'BDT',
       tran_id: input.merchantTransactionId,
@@ -209,7 +186,7 @@ export class SslcommerzAdapter {
     let response: Response;
     try {
       response = await this.fetcher(
-        credentials.live ? liveEndpoint : sandboxEndpoint,
+        env.SSLCOMMERZ_IS_LIVE === 'true' ? liveEndpoint : sandboxEndpoint,
         {
           method: 'POST',
           headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -252,7 +229,7 @@ export class SslcommerzAdapter {
         result.status === 'FAILED' ? 'FAILED' : 'UNKNOWN',
       );
     }
-    if (!trustedCheckoutUrl(gatewayUrl, credentials.live)) {
+    if (!trustedCheckoutUrl(gatewayUrl)) {
       // A session may already exist at the provider. Never disclose the address or retry blindly.
       throw new SslcommerzProviderError(
         'SSLCommerz returned an unsafe checkout address.',
@@ -263,19 +240,18 @@ export class SslcommerzAdapter {
   }
 
   public async validateTransaction(validationId: string): Promise<SslcommerzValidation> {
-    assertSslcommerzConfigured(this.paymentEnvironment);
-    const credentials = this.credentials;
+    assertSslcommerzConfigured();
     const query = new URLSearchParams({
       val_id: validationId,
-      store_id: credentials.storeId!,
-      store_passwd: credentials.password!,
+      store_id: env.SSLCOMMERZ_STORE_ID!,
+      store_passwd: env.SSLCOMMERZ_STORE_PASSWORD!,
       v: '1',
       format: 'json',
     });
     let response: Response;
     try {
       response = await this.fetcher(
-        `${credentials.live ? liveValidationEndpoint : sandboxValidationEndpoint}?${query.toString()}`,
+        `${env.SSLCOMMERZ_IS_LIVE === 'true' ? liveValidationEndpoint : sandboxValidationEndpoint}?${query.toString()}`,
         { signal: AbortSignal.timeout(15_000) },
       );
     } catch (cause) {
@@ -343,23 +319,22 @@ export class SslcommerzAdapter {
     amountPaisa: number;
     remarks: string;
   }): Promise<SslcommerzRefundInitiation> {
-    assertSslcommerzConfigured(this.paymentEnvironment);
-    const credentials = this.credentials;
+    assertSslcommerzConfigured();
     const query = new URLSearchParams({
       bank_tran_id: input.bankTransactionId,
       refund_trans_id: input.refundTransactionId,
       refund_amount: (input.amountPaisa / 100).toFixed(2),
       refund_remarks: input.remarks,
       refe_id: input.refundTransactionId,
-      store_id: credentials.storeId!,
-      store_passwd: credentials.password!,
+      store_id: env.SSLCOMMERZ_STORE_ID!,
+      store_passwd: env.SSLCOMMERZ_STORE_PASSWORD!,
       v: '1',
       format: 'json',
     });
     let response: Response;
     try {
       response = await this.fetcher(
-        `${refundEndpoint(credentials.live)}?${query}`,
+        `${refundEndpoint(env.SSLCOMMERZ_IS_LIVE === 'true')}?${query}`,
         { signal: AbortSignal.timeout(15_000) },
       );
     } catch (cause) {
@@ -400,18 +375,17 @@ export class SslcommerzAdapter {
     providerRefundId: string,
     bankTransactionId: string,
   ): Promise<SslcommerzRefundStatus> {
-    assertSslcommerzConfigured(this.paymentEnvironment);
-    const credentials = this.credentials;
+    assertSslcommerzConfigured();
     const query = new URLSearchParams({
       refund_ref_id: providerRefundId,
-      store_id: credentials.storeId!,
-      store_passwd: credentials.password!,
+      store_id: env.SSLCOMMERZ_STORE_ID!,
+      store_passwd: env.SSLCOMMERZ_STORE_PASSWORD!,
       format: 'json',
     });
     let response: Response;
     try {
       response = await this.fetcher(
-        `${refundEndpoint(credentials.live)}?${query}`,
+        `${refundEndpoint(env.SSLCOMMERZ_IS_LIVE === 'true')}?${query}`,
         { signal: AbortSignal.timeout(15_000) },
       );
     } catch (cause) {
