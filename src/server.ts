@@ -20,8 +20,11 @@ let maintenancePass: Promise<unknown> | undefined;
 const runScheduledMaintenance = () => {
   if (maintenancePass || maintenanceStop.signal.aborted) return;
   maintenancePass = runMaintenance(maintenanceWorkerId, undefined, maintenanceStop.signal)
-    .catch(() => {
-      logger.error('Scheduled maintenance run failed; inspect admin maintenance status');
+    .catch((error: unknown) => {
+      logger.error(
+        { err: error, workerId: maintenanceWorkerId },
+        'Scheduled maintenance run failed; inspect admin maintenance status',
+      );
     })
     .finally(() => {
       maintenancePass = undefined;

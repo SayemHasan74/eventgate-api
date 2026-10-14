@@ -14,8 +14,8 @@ process.once('SIGTERM', () => stop.abort());
 try {
   const result = await runMaintenance(workerId, undefined, stop.signal);
   logger.info({ workerId, ...result }, 'Maintenance run completed');
-} catch {
-  logger.error({ workerId }, 'Maintenance run failed');
+} catch (error) {
+  logger.error({ err: error, workerId }, 'Maintenance run failed');
   process.exitCode = 1;
 } finally {
   await getPrisma().$disconnect();

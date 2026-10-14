@@ -10,6 +10,7 @@ import { getPrisma } from '../lib/prisma.js';
 import { randomUUID } from 'node:crypto';
 import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
+import { maintenanceFailureSummary } from './maintenance-diagnostics.js';
 import { invalidatePublicDiscoveryCache } from '../modules/public-events/public-events.cache.js';
 import {
   reconcilePaymentAttempt,
@@ -178,7 +179,7 @@ const releasePendingOrder = async (orderId: string, status: 'EXPIRED' | 'CANCELL
   if (released) await invalidatePublicDiscoveryCache();
 };
 
-type WorkContext = { stopped: () => boolean };
+type WorkContext = { stopped: () => boolean; stage?: (value: string) => void };
 const processCancellationBatch = async (eventId: string, context: WorkContext): Promise<void> => {
   const event = await getPrisma().event.findUnique({ where: { id: eventId } });
   if (!event || event.status !== EventStatus.CANCELLED) return;
@@ -376,7 +377,9 @@ const enqueueOnce = async (
 };
 
 export const scheduleMaintenanceJobs = async (context?: WorkContext): Promise<void> => {
+  context?.stage?.('schedule-waitlists');
   await scheduleWaitlistMaintenance(() => !!context?.stopped());
+  context?.stage?.('schedule-reminders');
   await bootstrapReminderJobs(() => !!context?.stopped());
   const database = getPrisma();
   // Exclude already scheduled/failed work BEFORE limiting, so old unresolved
@@ -427,6 +430,7 @@ export const scheduleMaintenanceJobs = async (context?: WorkContext): Promise<vo
   ];
   for (const group of groups) {
     if (context?.stopped()) return;
+    context?.stage?.(`schedule-${group.type}`);
     const recurring = [
       JobType.DELIVER_NOTIFICATION,
       JobType.RECONCILE_PAYMENT,
@@ -521,20 +525,23 @@ export const runMaintenance = async (
   const deadline = Date.now() + env.MAINTENANCE_RUN_BUDGET_MS;
   const runToken = randomUUID();
   const stateWhere = { id: 'embedded-maintenance', runToken };
-  await getPrisma().maintenanceState.upsert({
-    where: { id: stateWhere.id },
-    create: { ...stateWhere, lastStartedAt: new Date(), heartbeatAt: new Date() },
-    update: {
-      runToken,
-      lastStartedAt: new Date(),
-      heartbeatAt: new Date(),
-      processed: 0,
-      failed: 0,
-    },
-  });
   let processed = 0;
   let failed = 0;
+  let completed = false;
+  let stage = 'record-start';
   try {
+    await getPrisma().maintenanceState.upsert({
+      where: { id: stateWhere.id },
+      create: { ...stateWhere, lastStartedAt: new Date(), heartbeatAt: new Date() },
+      update: {
+        runToken,
+        lastStartedAt: new Date(),
+        heartbeatAt: new Date(),
+        processed: 0,
+        failed: 0,
+      },
+    });
+    stage = 'recover-expired-leases';
     await getPrisma().$executeRaw(Prisma.sql`
     UPDATE "Job"
     SET "status" = CASE WHEN "failureAttempts" + 1 >= "maxAttempts" THEN 'FAILED'::"JobStatus" ELSE 'PENDING'::"JobStatus" END,
@@ -549,13 +556,19 @@ export const runMaintenance = async (
     WHERE "status" = 'RUNNING'
       AND "leaseExpiresAt" <= NOW()
   `);
-    await scheduleMaintenanceJobs({ stopped: () => !!signal?.aborted || Date.now() >= deadline });
+    await scheduleMaintenanceJobs({
+      stopped: () => !!signal?.aborted || Date.now() >= deadline,
+      stage: (value) => {
+        stage = value;
+      },
+    });
     let handled = 0;
     while (
       handled < Math.min(maxJobs, env.MAINTENANCE_MAX_JOBS) &&
       !signal?.aborted &&
       Date.now() < deadline
     ) {
+      stage = 'claim-job';
       const job = await claimNextJob(workerId);
       if (!job) break;
       handled++;
@@ -574,7 +587,8 @@ export const runMaintenance = async (
             data: { heartbeatAt: new Date(), processed, failed },
           });
         })()
-          .catch(() => {
+          .catch((error: unknown) => {
+            logger.error({ err: error, workerId, jobId: job.id }, 'Maintenance heartbeat failed');
             lostLease = true;
           })
           .finally(() => {
@@ -583,6 +597,7 @@ export const runMaintenance = async (
       }, 20000);
       heartbeat.unref();
       try {
+        stage = `process-${job.type}`;
         await processJob(job, {
           stopped: () => lostLease || !!signal?.aborted || Date.now() >= deadline,
         });
@@ -592,37 +607,54 @@ export const runMaintenance = async (
       } catch (error) {
         if (!(error instanceof RescheduleJob)) {
           failed += 1;
-          logger.error({ jobId: job.id, jobType: job.type }, 'Maintenance job did not complete');
+          logger.error(
+            { err: error, workerId, jobId: job.id, jobType: job.type },
+            'Maintenance job did not complete',
+          );
           await getPrisma().maintenanceState.updateMany({
             where: stateWhere,
             data: {
               lastFailureAt: new Date(),
-              lastFailure: `Maintenance ${job.type} requires attention.`,
+              lastFailure: maintenanceFailureSummary(stage, error),
             },
           });
         }
+        stage = `record-retry-${job.type}`;
         await retryOrFailJob(job, workerId, error);
       } finally {
         clearInterval(heartbeat);
         await renewal;
       }
     }
+    completed = true;
     return { processed, failed };
   } catch (error) {
+    failed = Math.max(failed, 1);
+    logger.error({ err: error, workerId, runToken, stage }, 'Maintenance pass failed');
     await getPrisma()
       .maintenanceState.updateMany({
         where: stateWhere,
         data: {
           lastFailureAt: new Date(),
-          lastFailure: 'Maintenance pass failed; check database/configuration.',
+          lastFailure: maintenanceFailureSummary(stage, error),
         },
       })
       .catch(() => undefined);
     throw error;
   } finally {
-    await getPrisma().maintenanceState.updateMany({
-      where: stateWhere,
-      data: { lastCompletedAt: new Date(), heartbeatAt: new Date(), processed, failed },
-    });
+    await getPrisma()
+      .maintenanceState.updateMany({
+        where: stateWhere,
+        data: {
+          ...(completed ? { lastCompletedAt: new Date() } : {}),
+          heartbeatAt: new Date(),
+          processed,
+          failed,
+        },
+      })
+      .catch((error: unknown) => {
+        logger.error({ err: error, workerId, runToken }, 'Maintenance final status update failed');
+        if (completed) throw error;
+      });
   }
 };
