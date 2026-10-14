@@ -61,6 +61,8 @@ app.use(
   express.urlencoded({ extended: false, limit: '16kb', parameterLimit: 50 }),
 );
 app.use(express.json({ limit: '100kb' }));
+// Platform probes must remain available when the public API budget is exhausted.
+app.use('/api/v1/health', healthRouter);
 app.use('/api/v1', apiRateLimiter);
 app.use('/api/v1', (request, response, next) => {
   if (!request.path.startsWith('/events') && !request.path.startsWith('/health'))
@@ -77,7 +79,6 @@ app.get('/', (_request, response) => {
 app.get('/openapi.json', (_request, response) => response.json(openapi));
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapi, { explorer: true }));
 
-app.use('/api/v1/health', healthRouter);
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/notifications', notificationsRouter);
 app.use('/api/v1/saved-events', savedEventsRouter);
