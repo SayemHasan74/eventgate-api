@@ -443,10 +443,22 @@ if (!testUrl) {
       const f = await fixture();
       await capture(f.order.id);
       const refund = await requestRefund(f.attendee.id, f.order.id, 'Plans changed');
-      await reviewRefund(f.admin.id, refund.id, {
+      const approval = await reviewRefund(f.admin.id, refund.id, {
         decision: 'approve',
         reviewerNote: 'Eligible unused passes',
       });
+      expect(approval.status).toBe('APPROVED');
+      expect(SslcommerzAdapter.prototype.initiateRefund).not.toHaveBeenCalled();
+      expect(
+        await db.job.findUniqueOrThrow({
+          where: { deduplicationKey: `reconcile-refund:${refund.id}` },
+        }),
+      ).toMatchObject({
+        type: 'RECONCILE_REFUND',
+        status: 'PENDING',
+        payload: { refundId: refund.id },
+      });
+      await reconcileRefund(refund.id);
       await Promise.all([reconcileRefund(refund.id), reconcileRefund(refund.id)]);
       expect(await db.order.findUnique({ where: { id: f.order.id } })).toMatchObject({
         status: 'REFUNDED',
@@ -497,6 +509,7 @@ if (!testUrl) {
         new Error('Connection lost after provider accepted'),
       );
       await reviewRefund(f.admin.id, refund.id, { decision: 'approve' });
+      await startRefund(refund.id);
       await db.refund.update({
         where: { id: refund.id },
         data: { processedAt: new Date(Date.now() - 60000) },

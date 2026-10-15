@@ -204,10 +204,20 @@ export async function reviewRefund(adminId: string, refundId: string, input: Rev
         metadata: { orderId: found.orderId },
       },
     });
+    if (input.decision === 'approve')
+      await tx.job.upsert({
+        where: { deduplicationKey: `reconcile-refund:${refundId}` },
+        update: {},
+        create: {
+          type: 'RECONCILE_REFUND',
+          deduplicationKey: `reconcile-refund:${refundId}`,
+          payload: { refundId },
+          runAt: new Date(),
+        },
+      });
     return reviewed;
   });
-  if (input.decision === 'approve') await startRefund(refund.id);
-  return getPrisma().refund.findUniqueOrThrow({ where: { id: refund.id } });
+  return refund;
 }
 
 export async function startRefund(
