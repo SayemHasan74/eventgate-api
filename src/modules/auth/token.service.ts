@@ -26,6 +26,7 @@ const getAccessSecret = (): Uint8Array => {
 export type AccessTokenClaims = {
   userId: string;
   role: string;
+  tokenVersion?: number;
   sessionFamilyId?: string;
 };
 
@@ -33,6 +34,7 @@ export const signAccessToken = async (claims: AccessTokenClaims): Promise<string
   new SignJWT({
     role: claims.role,
     tokenType: 'access',
+    tokenVersion: claims.tokenVersion ?? 0,
     ...(claims.sessionFamilyId ? { sessionFamilyId: claims.sessionFamilyId } : {}),
   })
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
@@ -54,6 +56,7 @@ export const verifyAccessToken = async (token: string): Promise<AccessTokenClaim
     return {
       userId: payload.sub,
       role: payload.role,
+      tokenVersion: typeof payload.tokenVersion === 'number' ? payload.tokenVersion : 0,
       ...(typeof payload.sessionFamilyId === 'string'
         ? { sessionFamilyId: payload.sessionFamilyId }
         : {}),

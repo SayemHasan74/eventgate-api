@@ -19,6 +19,7 @@ const getClient = async (): Promise<RedisClientType | undefined> => {
   if (!client) {
     client = createClient({
       url: env.REDIS_URL,
+      disableOfflineQueue: true,
       socket: { connectTimeout: 1_000, reconnectStrategy: false },
     });
     client.on('error', logUnavailable);
@@ -38,9 +39,28 @@ const getClient = async (): Promise<RedisClientType | undefined> => {
   return client.isReady ? client : undefined;
 };
 
+const bounded = async <T>(work: Promise<T>): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Optional cache command timed out')), 500);
+      }),
+    ]);
+  } catch (error) {
+    if (client?.isOpen) client.destroy();
+    client = undefined;
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 export const readCache = async (key: string): Promise<string | null> => {
   try {
-    return (await (await getClient())?.get(key)) ?? null;
+    const ready = await getClient();
+    return ready ? await bounded(ready.get(key)) : null;
   } catch (error) {
     logUnavailable(error);
     return null;
@@ -49,7 +69,8 @@ export const readCache = async (key: string): Promise<string | null> => {
 
 export const writeCache = async (key: string, value: string, ttlSeconds: number): Promise<void> => {
   try {
-    await (await getClient())?.set(key, value, { EX: ttlSeconds });
+    const ready = await getClient();
+    if (ready) await bounded(ready.set(key, value, { EX: ttlSeconds }));
   } catch (error) {
     logUnavailable(error);
   }
@@ -57,7 +78,8 @@ export const writeCache = async (key: string, value: string, ttlSeconds: number)
 
 export const incrementCache = async (key: string): Promise<void> => {
   try {
-    await (await getClient())?.incr(key);
+    const ready = await getClient();
+    if (ready) await bounded(ready.incr(key));
   } catch (error) {
     logUnavailable(error);
   }

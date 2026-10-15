@@ -15,6 +15,10 @@ const requiredSeedValue = (name: string): string => {
   return value;
 };
 
+// Production provisioning must not rewrite accounts or historical event inventory.
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('db:seed is disabled in production. Use explicit, audited account provisioning.');
+}
 const databaseUrl = requiredSeedValue('DATABASE_URL');
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: databaseUrl }),

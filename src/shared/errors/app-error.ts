@@ -23,7 +23,7 @@ export class AppError extends Error {
     this.name = 'AppError';
     this.statusCode = statusCode;
     this.code = code;
-    this.errors = errors;
+    this.errors = errors.length ? errors : [{ code, message }];
     this.isOperational = true;
   }
 }

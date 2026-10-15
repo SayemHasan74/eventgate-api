@@ -127,6 +127,8 @@ model User {
   role                   UserRole                @default(ATTENDEE)
   status                 UserStatus              @default(ACTIVE)
   deletedAt              DateTime?               @db.Timestamptz(6)
+  tokenVersion           Int                     @default(0)
+  passwordResets         PasswordReset[]
   emailVerifiedAt        DateTime?               @db.Timestamptz(6)
   notifications          Notification[]
   notificationPreference NotificationPreference?
@@ -229,6 +231,8 @@ model NotificationDelivery {
   recipient         String?                   @db.VarChar(320)
   sender            String?                   @db.VarChar(320)
   baseUrl           String?                   @db.VarChar(500)
+  passwordResetId   String?                   @db.Uuid
+  passwordReset     PasswordReset?            @relation(fields: [passwordResetId], references: [id], onDelete: Restrict)
   verificationId    String?                   @db.Uuid
   createdAt         DateTime                  @default(now()) @db.Timestamptz(6)
   updatedAt         DateTime                  @updatedAt @db.Timestamptz(6)
@@ -594,4 +598,17 @@ model MaintenanceState {
   failed          Int       @default(0)
   lastFailureAt   DateTime? @db.Timestamptz(6)
   lastFailure     String?   @db.VarChar(255)
+}
+
+model PasswordReset {
+  id         String                 @id @default(uuid()) @db.Uuid
+  userId     String                 @db.Uuid
+  tokenHash  String                 @unique @db.VarChar(64)
+  expiresAt  DateTime               @db.Timestamptz(6)
+  consumedAt DateTime?              @db.Timestamptz(6)
+  createdAt  DateTime               @default(now()) @db.Timestamptz(6)
+  user       User                   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  deliveries NotificationDelivery[]
+
+  @@index([userId, createdAt])
 }

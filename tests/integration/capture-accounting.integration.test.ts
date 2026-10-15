@@ -28,6 +28,7 @@ if (!testUrl) {
       initiateCheckout,
       fulfillValidatedPayment,
       processSslcommerzCallback,
+      processPaymentEvent,
       reconcilePaymentAttempt,
     },
     { requestRefund, reviewRefund, startRefund, reconcileRefund, listRefunds },
@@ -159,6 +160,57 @@ if (!testUrl) {
     afterAll(async () => {
       vi.restoreAllMocks();
       await db.$disconnect();
+    });
+
+    it('closes a stale callback only after independent canonical verification', async () => {
+      const f = await fixture();
+      const { attempt, validation } = await capture(f.order.id);
+      const event = await db.paymentEvent.create({
+        data: {
+          eventType: 'SSLCOMMERZ_SUCCESS',
+          payload: { tran_id: attempt.merchantTransactionId, val_id: 'stale' },
+          providerEventKey: crypto.randomUUID(),
+        },
+      });
+      vi.spyOn(SslcommerzAdapter.prototype, 'lookupTransaction').mockResolvedValue({
+        status: 'CAPTURED',
+        validationId: validation.validationId,
+      });
+      vi.mocked(SslcommerzAdapter.prototype.validateTransaction)
+        .mockRejectedValueOnce(new Error('Stale validation identifier'))
+        .mockResolvedValueOnce(validation);
+      await processPaymentEvent(event.id);
+      const stored = await db.paymentEvent.findUniqueOrThrow({ where: { id: event.id } });
+      expect(stored.processedAt).not.toBeNull();
+      expect(stored.processingError).toContain('independent merchant history');
+      expect(
+        await db.auditLog.count({
+          where: { entityId: event.id, action: 'CALLBACK_CANONICAL_CAPTURE_REVERIFIED' },
+        }),
+      ).toBe(1);
+      expect(await db.ticket.count({ where: { orderId: f.order.id } })).toBe(2);
+    });
+
+    it('does not hide a conflicting valid capture behind canonical verification', async () => {
+      const f = await fixture();
+      const { attempt, validation } = await capture(f.order.id);
+      const event = await db.paymentEvent.create({
+        data: {
+          eventType: 'SSLCOMMERZ_SUCCESS',
+          payload: { tran_id: attempt.merchantTransactionId, val_id: 'other' },
+          providerEventKey: crypto.randomUUID(),
+        },
+      });
+      const lookup = vi.spyOn(SslcommerzAdapter.prototype, 'lookupTransaction');
+      vi.mocked(SslcommerzAdapter.prototype.validateTransaction).mockResolvedValueOnce({
+        ...validation,
+        providerTransactionId: 'different-capture',
+      });
+      await expect(processPaymentEvent(event.id)).rejects.toThrow('needs retry');
+      expect(lookup).not.toHaveBeenCalled();
+      expect(
+        (await db.paymentEvent.findUniqueOrThrow({ where: { id: event.id } })).processedAt,
+      ).toBeNull();
     });
 
     it('atomically fulfills a verified capture when notification work exceeds five seconds', async () => {
@@ -623,6 +675,60 @@ if (!testUrl) {
         status: 'PAID',
       });
       expect(await db.ticket.count()).toBe(2);
+    });
+    it('queues confirmed-failure retries without provider I/O and blocks duplicate retry requests', async () => {
+      const f = await fixture();
+      const { attempt } = await capture(f.order.id);
+      const requested = await requestRefund(f.attendee.id, f.order.id);
+      await reviewRefund(f.admin.id, requested.id, {
+        decision: 'approve',
+        reviewerNote: 'Eligible unused booking',
+      });
+      await db.refund.update({
+        where: { id: requested.id },
+        data: { status: 'FAILED', failureCode: 'PROVIDER_REFUND_CONFIRMED_FAILED' },
+      });
+      const { queueRefundRetry } = await import('../../src/modules/refunds/refunds.service.js');
+      await queueRefundRetry(f.admin.id, requested.id, 'Provider confirmed previous failure');
+      expect(SslcommerzAdapter.prototype.initiateRefund).not.toHaveBeenCalled();
+      expect(await db.refund.findUnique({ where: { id: requested.id } })).toMatchObject({
+        status: 'APPROVED',
+        paymentAttemptId: attempt.id,
+      });
+      expect(
+        await db.job.findUnique({
+          where: { deduplicationKey: `reconcile-refund:${requested.id}` },
+        }),
+      ).toMatchObject({ status: 'PENDING' });
+      await expect(
+        queueRefundRetry(f.admin.id, requested.id, 'Duplicate request'),
+      ).rejects.toMatchObject({ statusCode: 409 });
+    });
+    it('excludes refund-blocked passes from the overview and retains admission after cancellation', async () => {
+      const f = await fixture();
+      await capture(f.order.id);
+      const { attendeeOverview } =
+        await import('../../src/modules/reports/workspace-reads.service.js');
+      expect((await attendeeOverview(f.attendee.id)).activeTickets).toBe(2);
+      const refund = await requestRefund(f.attendee.id, f.order.id);
+      expect((await attendeeOverview(f.attendee.id)).activeTickets).toBe(0);
+      expect((await attendeeOverview(f.attendee.id)).upcomingTickets).toHaveLength(0);
+      await reviewRefund(f.admin.id, refund.id, {
+        decision: 'reject',
+        reviewerNote: 'Request rejected for fixture',
+      });
+      expect((await attendeeOverview(f.attendee.id)).activeTickets).toBe(2);
+      await db.event.update({
+        where: { id: f.event.id },
+        data: { startAt: new Date(Date.now() + 3600000) },
+      });
+      const pass = await db.ticket.findFirstOrThrow({ where: { orderId: f.order.id } });
+      await checkInTicket(f.organizer, f.event.id, { qrToken: pass.qrToken });
+      await cancelEvent(f.organizer, f.event.id);
+      const { listCheckInHistory } = await import('../../src/modules/tickets/tickets.service.js');
+      const history = await listCheckInHistory(f.organizer, f.event.id, { page: 1, limit: 25 });
+      expect(history.checkedInCount).toBe(1);
+      expect(history.tickets[0]?.id).toBe(pass.id);
     });
   });
 }

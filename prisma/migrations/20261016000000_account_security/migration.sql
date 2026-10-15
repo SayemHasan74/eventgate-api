@@ -1,0 +1,8 @@
+ALTER TABLE "User" ADD COLUMN "tokenVersion" INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE "PasswordReset" (
+ "id" UUID PRIMARY KEY, "userId" UUID NOT NULL REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+ "tokenHash" VARCHAR(64) NOT NULL UNIQUE, "expiresAt" TIMESTAMPTZ(6) NOT NULL,
+ "consumedAt" TIMESTAMPTZ(6), "createdAt" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX "PasswordReset_userId_createdAt_idx" ON "PasswordReset"("userId","createdAt");
+ALTER TABLE "NotificationDelivery" ADD COLUMN "passwordResetId" UUID REFERENCES "PasswordReset"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

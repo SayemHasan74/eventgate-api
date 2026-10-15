@@ -1,5 +1,6 @@
+import { activeAdmissionSql } from '../tickets/ticket-admission.js';
 import { z } from 'zod';
-import { PaymentStatus, type Prisma } from '../../generated/prisma/client.js';
+import { PaymentStatus, Prisma } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
 import {
@@ -133,13 +134,10 @@ export const attendeeOverview = async (attendeeId: string) => {
     refundAttention,
   ] = await Promise.all([
     database.order.groupBy({ by: ['status'], where: { attendeeId }, _count: true }),
-    database.ticket.count({
-      where: {
-        attendeeId,
-        status: 'ACTIVE',
-        event: { status: 'PUBLISHED', endAt: { gte: now }, deletedAt: null },
-      },
-    }),
+    database.$queryRaw<Array<{ count: number }>>(Prisma.sql`
+      SELECT COUNT(*)::int AS count FROM "Ticket" t JOIN "Order" o ON o."id"=t."orderId"
+      JOIN "Event" e ON e."id"=t."eventId" LEFT JOIN "PaymentAttempt" p ON p."id"=o."fulfilledPaymentAttemptId"
+      WHERE t."attendeeId"=${attendeeId}::uuid AND ${activeAdmissionSql(now)}`),
     database.refund.count({
       where: {
         order: { attendeeId },
@@ -149,16 +147,13 @@ export const attendeeOverview = async (attendeeId: string) => {
         ],
       },
     }),
-    database.ticket.findMany({
-      where: {
-        attendeeId,
-        status: 'ACTIVE',
-        event: { status: 'PUBLISHED', startAt: { gt: now }, deletedAt: null },
-      },
-      select: { id: true, orderId: true, event: { select: eventSummarySelect } },
-      orderBy: [{ event: { startAt: 'asc' } }, { id: 'asc' }],
-      take: 5,
-    }),
+    database.$queryRaw<Array<{ id: string; orderId: string; event: unknown }>>(Prisma.sql`
+      SELECT t."id",t."orderId", json_build_object('id',e."id",'title',e."title",'slug',e."slug",
+        'status',e."status",'venue',e."venue",'city',e."city",'startAt',e."startAt",'endAt',e."endAt",'deletedAt',e."deletedAt") AS event
+      FROM "Ticket" t JOIN "Order" o ON o."id"=t."orderId" JOIN "Event" e ON e."id"=t."eventId"
+      LEFT JOIN "PaymentAttempt" p ON p."id"=o."fulfilledPaymentAttemptId"
+      WHERE t."attendeeId"=${attendeeId}::uuid AND e."startAt">${now} AND ${activeAdmissionSql(now)}
+      ORDER BY e."startAt", t."id" LIMIT 5`),
     database.order.findMany({
       where: { attendeeId },
       select: {
@@ -222,7 +217,7 @@ export const attendeeOverview = async (attendeeId: string) => {
   ]);
   return {
     ordersByStatus: Object.fromEntries(ordersByStatus.map((group) => [group.status, group._count])),
-    activeTickets,
+    activeTickets: activeTickets[0]?.count ?? 0,
     refundRequests,
     upcomingTickets,
     recentOrders,

@@ -140,6 +140,12 @@ export const createOrder = async (
           );
         }
 
+        if (tier.pricePaisa * input.quantity > 2147483647)
+          throw new AppError({
+            statusCode: 400,
+            code: 'ORDER_AMOUNT_TOO_LARGE',
+            message: 'Reduce the quantity: this booking exceeds the supported payment amount.',
+          });
         const reservation = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
           UPDATE "TicketTier" AS tier
           SET "reservedQuantity" = tier."reservedQuantity" + ${input.quantity}
@@ -153,7 +159,7 @@ export const createOrder = async (
             AND NOT tier."salesPaused"
             AND tier."salesStartAt" <= clock_timestamp()
             AND tier."salesEndAt" > clock_timestamp()
-            AND tier."reservedQuantity" + tier."soldQuantity" + ${input.quantity} <= tier."capacity"
+            AND tier."reservedQuantity"::bigint + tier."soldQuantity"::bigint + ${input.quantity} <= tier."capacity"
           RETURNING tier."id"
         `);
         if (reservation.length === 0) {

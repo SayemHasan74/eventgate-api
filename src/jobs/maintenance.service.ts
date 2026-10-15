@@ -1,3 +1,4 @@
+import { cleanExpiredOperationalRecords } from './retention.js';
 import {
   EventStatus,
   JobStatus,
@@ -541,6 +542,8 @@ export const runMaintenance = async (
         failed: 0,
       },
     });
+    stage = 'clean-expired-operational-records';
+    await cleanExpiredOperationalRecords();
     stage = 'recover-expired-leases';
     await getPrisma().$executeRaw(Prisma.sql`
     UPDATE "Job"

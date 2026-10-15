@@ -1,3 +1,4 @@
+import { passwordResetToken } from '../auth/password.service.js';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
@@ -74,6 +75,7 @@ export async function deliverNotification(id: string, adapter = sendEmail) {
       include: {
         notification: { include: { user: { include: { notificationPreference: true } } } },
         verification: true,
+        passwordReset: true,
       },
     });
     if (
@@ -105,13 +107,15 @@ export async function deliverNotification(id: string, adapter = sendEmail) {
       !isQuickAccessAccount(user) &&
       !user.deletedAt &&
       (!delivery.recipient || delivery.recipient === user.email) &&
-      (delivery.verification
-        ? delivery.verification.email === user.email &&
-          !delivery.verification.consumedAt &&
-          delivery.verification.expiresAt > now
-        : !!user.emailVerifiedAt &&
-          !!preference &&
-          notificationConsent(preference, delivery.notification.type, 'EMAIL'));
+      (delivery.passwordReset
+        ? !delivery.passwordReset.consumedAt && delivery.passwordReset.expiresAt > now
+        : delivery.verification
+          ? delivery.verification.email === user.email &&
+            !delivery.verification.consumedAt &&
+            delivery.verification.expiresAt > now
+          : !!user.emailVerifiedAt &&
+            !!preference &&
+            notificationConsent(preference, delivery.notification.type, 'EMAIL'));
     if (!emailAvailable() || !eligible) {
       await tx.notificationDelivery.update({
         where: { id },
@@ -153,7 +157,12 @@ export async function deliverNotification(id: string, adapter = sendEmail) {
         baseUrl: delivery.baseUrl ?? env.FRONTEND_URL.replace(/\/$/, ''),
       },
     });
-    return { ...updated, notification: delivery.notification, verification: delivery.verification };
+    return {
+      ...updated,
+      notification: delivery.notification,
+      verification: delivery.verification,
+      passwordReset: delivery.passwordReset,
+    };
   });
   if (claimed) {
     let text = `${claimed.notification.body}\n\nOpen EventGate: ${claimed.baseUrl}${claimed.notification.actionPath}`;
@@ -173,6 +182,12 @@ export async function deliverNotification(id: string, adapter = sendEmail) {
         return;
       }
       text = `Verify your EventGate email within 30 minutes. Sign in as this account, then open:\n${claimed.baseUrl}/account/verify-email#token=${token}\n\nVerification does not enable email subscriptions. Ignore this if you did not request it.`;
+    }
+    if (claimed.passwordReset) {
+      const token = passwordResetToken(claimed.passwordReset.id, claimed.passwordReset.userId);
+      if (!tokenMatches(token, claimed.passwordReset.tokenHash))
+        throw new Error('Password reset signing key changed.');
+      text = `Reset your EventGate password within 30 minutes:\n${claimed.baseUrl}/auth/reset-password#token=${token}\n\nIf you did not request this, ignore this email. Your password has not changed.`;
     }
     const result = await adapter({
       from: claimed.sender!,

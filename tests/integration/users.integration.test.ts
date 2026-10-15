@@ -16,6 +16,10 @@ if (!testDatabaseUrl) {
   }
 
   process.env.DATABASE_URL = testDatabaseUrl;
+  process.env.JWT_REFRESH_SECRET = 'fixture-recovery-secret-at-least-thirty-two-characters';
+  process.env.RESEND_API_KEY = 're_fixture_never_sent';
+  process.env.EMAIL_FROM = 'EventGate <no-reply@example.test>';
+  process.env.EMAIL_VERIFICATION_SECRET = 'fixture-email-secret-at-least-thirty-two-characters';
   process.env.JWT_ACCESS_SECRET = 'test-access-secret-that-is-at-least-thirty-two-characters';
 
   const [
@@ -35,7 +39,7 @@ if (!testDatabaseUrl) {
   const createUser = async (role: (typeof UserRole)[keyof typeof UserRole], name: string) =>
     database.user.create({
       data: {
-        email: `${name.toLowerCase()}-${crypto.randomUUID()}@example.com`,
+        email: `${name.toLowerCase().replaceAll(' ', '-')}-${crypto.randomUUID()}@example.com`,
         displayName: name,
         role,
       },
@@ -56,6 +60,168 @@ if (!testDatabaseUrl) {
 
     afterAll(async () => {
       await database.$disconnect();
+    });
+
+    it('changes credentials and immediately revokes old access and refresh sessions', async () => {
+      const { default: argon2 } = await import('argon2');
+      const attendee = await createUser(UserRole.ATTENDEE, 'Password Owner');
+      await database.user.update({
+        where: { id: attendee.id },
+        data: { passwordHash: await argon2.hash('Original-password-123') },
+      });
+      const headers = await bearer(attendee),
+        refresh = createRefreshToken();
+      await database.refreshSession.create({
+        data: {
+          userId: attendee.id,
+          familyId: refresh.familyId,
+          tokenHash: refresh.hash,
+          expiresAt: refresh.expiresAt,
+        },
+      });
+      await request(app)
+        .post('/api/v1/users/me/password')
+        .set(headers)
+        .send({ currentPassword: 'incorrect', password: 'Replacement-password-123' })
+        .expect(400);
+      await request(app)
+        .post('/api/v1/users/me/password')
+        .set(headers)
+        .send({ currentPassword: 'Original-password-123', password: 'Replacement-password-123' })
+        .expect(200);
+      const response = await request(app).get('/api/v1/users/me').set(headers).expect(401);
+      expect(response.body.errors[0].code).toBe('SESSION_REVOKED');
+      expect(
+        await database.refreshSession.count({ where: { userId: attendee.id, revokedAt: null } }),
+      ).toBe(0);
+      const updated = await database.user.findUniqueOrThrow({ where: { id: attendee.id } });
+      expect(await argon2.verify(updated.passwordHash!, 'Replacement-password-123')).toBe(true);
+      const newToken = await signAccessToken({
+        userId: attendee.id,
+        role: attendee.role,
+        tokenVersion: updated.tokenVersion,
+      });
+      const profile = await request(app)
+        .get('/api/v1/users/me')
+        .set('Authorization', `Bearer ${newToken}`)
+        .expect(200);
+      expect(profile.body.data.passwordLoginEnabled).toBe(true);
+      expect(profile.body.data).not.toHaveProperty('passwordHash');
+    });
+
+    it('queues private recovery links, separates verification tokens, and consumes resets once', async () => {
+      const { default: argon2 } = await import('argon2');
+      const { passwordResetToken } = await import('../../src/modules/auth/password.service.js');
+      const { verificationToken } =
+        await import('../../src/modules/notifications/notifications.service.js');
+      const attendee = await createUser(UserRole.ATTENDEE, 'Recovery Owner');
+      await database.user.update({
+        where: { id: attendee.id },
+        data: { passwordHash: await argon2.hash('Original-password-123') },
+      });
+      const response = await request(app)
+        .post('/api/v1/auth/request-password-reset')
+        .send({ email: attendee.email })
+        .expect(202);
+      const unknown = await request(app)
+        .post('/api/v1/auth/request-password-reset')
+        .send({ email: 'missing@example.test' })
+        .expect(202);
+      expect(unknown.body.data).toEqual(response.body.data);
+      const reset = await database.passwordReset.findFirstOrThrow({
+        where: { userId: attendee.id },
+      });
+      const token = passwordResetToken(reset.id, attendee.id);
+      expect(JSON.stringify(response.body)).not.toContain(token);
+      const delivery = await database.notificationDelivery.findFirstOrThrow({
+        where: { passwordResetId: reset.id },
+      });
+      expect(delivery.state).toBe('PENDING');
+      expect(
+        JSON.stringify(
+          await database.notification.findFirstOrThrow({ where: { userId: attendee.id } }),
+        ),
+      ).not.toContain(token);
+      await request(app)
+        .post('/api/v1/auth/reset-password')
+        .send({ token: verificationToken(reset.id, attendee.id), password: 'New-password-123456' })
+        .expect(400);
+      await request(app)
+        .post('/api/v1/auth/reset-password')
+        .send({ token, password: 'New-password-123456' })
+        .expect(200);
+      await request(app)
+        .post('/api/v1/auth/reset-password')
+        .send({ token, password: 'Second-password-123456' })
+        .expect(400);
+      expect(
+        (await database.user.findUniqueOrThrow({ where: { id: attendee.id } })).tokenVersion,
+      ).toBe(1);
+    });
+
+    it('protects shared quick-access credentials from password changes and recovery', async () => {
+      const { quickAccessEmail } = await import('../../src/shared/security/quick-access.js');
+      const user = await database.user.create({
+        data: { email: quickAccessEmail('ATTENDEE'), role: 'ATTENDEE', displayName: 'Shared' },
+      });
+      await request(app)
+        .post('/api/v1/users/me/password')
+        .set(await bearer(user))
+        .send({ currentPassword: 'anything', password: 'Replacement-password-123' })
+        .expect(403);
+      await request(app)
+        .post('/api/v1/auth/request-password-reset')
+        .send({ email: user.email })
+        .expect(202);
+      expect(await database.passwordReset.count({ where: { userId: user.id } })).toBe(0);
+    });
+
+    it('cleans old operational records while retaining active token families', async () => {
+      const { cleanExpiredOperationalRecords } = await import('../../src/jobs/retention.js');
+      const user = await createUser(UserRole.ATTENDEE, 'Retention');
+      const old = new Date(Date.now() - 40 * 86400000),
+        family = crypto.randomUUID();
+      for (const [familyId, expiresAt] of [
+        [family, old],
+        [family, new Date(Date.now() + 86400000)],
+        [crypto.randomUUID(), old],
+      ] as const) {
+        await database.refreshSession.create({
+          data: { userId: user.id, familyId, tokenHash: crypto.randomUUID(), expiresAt },
+        });
+      }
+      const result = await cleanExpiredOperationalRecords();
+      expect(result.sessions).toBe(1);
+      expect(await database.refreshSession.count({ where: { familyId: family } })).toBe(2);
+    });
+
+    it('archives retired classification flags before removing unused columns', async () => {
+      const { readFile } = await import('node:fs/promises');
+      const user = await createUser(UserRole.ATTENDEE, 'Legacy');
+      await database.$executeRawUnsafe(
+        'ALTER TABLE "User" ADD COLUMN "isDemo" boolean NOT NULL DEFAULT false',
+      );
+      await database.$executeRawUnsafe(
+        'ALTER TABLE "Event" ADD COLUMN "isDemo" boolean NOT NULL DEFAULT false',
+      );
+      await database.$executeRaw`UPDATE "User" SET "isDemo"=true WHERE "id"=${user.id}::uuid`;
+      const sql = await readFile(
+        new URL(
+          '../../prisma/migrations/20261016010000_retire_unused_demo_flags/migration.sql',
+          import.meta.url,
+        ),
+        'utf8',
+      );
+      await database.$executeRawUnsafe(sql);
+      expect(
+        await database.auditLog.count({
+          where: { entityId: user.id, action: 'LEGACY_DEMO_CLASSIFICATION_ARCHIVED' },
+        }),
+      ).toBe(1);
+      const columns = await database.$queryRaw<
+        { count: number }[]
+      >`SELECT COUNT(*)::int AS count FROM information_schema.columns WHERE table_schema=current_schema() AND table_name IN ('User','Event') AND column_name='isDemo'`;
+      expect(columns[0]?.count).toBe(0);
     });
 
     it('allows an attendee to edit only their profile and rejects privilege injection', async () => {

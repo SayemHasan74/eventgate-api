@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { rateLimit } from 'express-rate-limit';
+import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
+import { verifiedVisitorIp } from '../../shared/security/proxy-identity.js';
 import { authenticate } from '../../middleware/authenticate.js';
 import { authorize } from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
@@ -76,6 +77,7 @@ notificationAccountRouter.patch(
 const verificationLimit = rateLimit({
   windowMs: 3600000,
   limit: 5,
+  keyGenerator: (request) => ipKeyGenerator(verifiedVisitorIp(request) ?? request.ip ?? 'unknown'),
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   handler: (_r, s) => {

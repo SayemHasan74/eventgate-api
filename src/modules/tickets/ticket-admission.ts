@@ -1,3 +1,4 @@
+import { Prisma } from '../../generated/prisma/client.js';
 export type AdmissionInput = {
   status: string;
   event: { status: string; endAt: Date; deletedAt?: Date | null };
@@ -44,3 +45,11 @@ export function effectiveAdmissionState(ticket: AdmissionInput, now = new Date()
   if (ticket.event.status !== 'PUBLISHED') return 'VOIDED';
   return 'ACTIVE';
 }
+
+// Shared SQL aliases: t ticket, o order, e event, p canonical payment.
+export const activeAdmissionSql = (now: Date) => Prisma.sql`
+  t."status" = 'ACTIVE' AND o."status" = 'PAID' AND NOT o."financialReviewRequired"
+  AND e."status" = 'PUBLISHED' AND e."deletedAt" IS NULL AND e."endAt" >= ${now}
+  AND p."status" = 'SUCCEEDED' AND p."providerTransactionId" IS NOT NULL AND p."replayOfAttemptId" IS NULL
+  AND NOT EXISTS (SELECT 1 FROM "Refund" r WHERE r."paymentAttemptId" = p."id"
+    AND (r."status" IN ('REQUESTED','APPROVED','PROCESSING','UNKNOWN','FAILED','SUCCEEDED') OR r."needsInvestigation"))`;

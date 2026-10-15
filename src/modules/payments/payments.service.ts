@@ -68,6 +68,13 @@ export const fulfillValidatedPayment = async (
       throw new Error('Validated payment does not match its EventGate payment attempt.');
     }
     if (attempt.status === PaymentStatus.SUCCEEDED) {
+      const canonical = attempt.replayOfAttemptId
+        ? await tx.paymentAttempt.findUnique({ where: { id: attempt.replayOfAttemptId } })
+        : attempt;
+      if (!canonical || canonical.providerTransactionId !== validation.providerTransactionId)
+        throw new Error(
+          'A different capture was reported for an already settled attempt. Investigate provider history.',
+        );
       if (attempt.failureCode || attempt.failureMessage)
         await tx.paymentAttempt.update({
           where: { id: attempt.id },
@@ -362,8 +369,10 @@ export const processPaymentEvent = async (eventId: string, adapter = new Sslcomm
     });
     return { accepted: true };
   }
+  let callbackValidated = false;
   try {
     const validation = await adapter.validateTransaction(validationId);
+    callbackValidated = true;
     const fulfillment = await fulfillValidatedPayment(attempt.id, validation);
     await getPrisma().paymentEvent.update({
       where: { id: event.id },
@@ -375,6 +384,58 @@ export const processPaymentEvent = async (eventId: string, adapter = new Sslcomm
       },
     });
   } catch (error) {
+    // A malformed/stale callback must not poison a verified purchase forever.
+    // Only an independent merchant-history lookup plus canonical validation can close it.
+    if (
+      !callbackValidated &&
+      attempt.status === 'SUCCEEDED' &&
+      !attempt.replayOfAttemptId &&
+      attempt.providerValidationId &&
+      attempt.providerTransactionId
+    ) {
+      try {
+        const history = await adapter.lookupTransaction({
+          merchantTransactionId: attempt.merchantTransactionId,
+        });
+        if (
+          history.status === 'CAPTURED' &&
+          history.validationId === attempt.providerValidationId
+        ) {
+          const canonical = await adapter.validateTransaction(history.validationId);
+          if (
+            validStatus(canonical.status) &&
+            canonical.providerTransactionId === attempt.providerTransactionId &&
+            canonical.merchantTransactionId === attempt.merchantTransactionId &&
+            canonical.amountPaisa === attempt.amountPaisa &&
+            canonical.currency === attempt.currency
+          ) {
+            await serializableTransaction(async (tx) => {
+              await lockOrderGraph(tx, attempt.orderId);
+              await tx.paymentEvent.update({
+                where: { id: event.id },
+                data: {
+                  processedAt: new Date(),
+                  capturedPaymentAttemptId: attempt.id,
+                  processingError:
+                    'Unconfirmed callback retained; independent merchant history and canonical capture were verified. No financial state changed.',
+                },
+              });
+              await tx.auditLog.create({
+                data: {
+                  action: 'CALLBACK_CANONICAL_CAPTURE_REVERIFIED',
+                  entityType: 'PAYMENT_EVENT',
+                  entityId: event.id,
+                  metadata: { paymentAttemptId: attempt.id },
+                },
+              });
+            });
+            return { accepted: true };
+          }
+        }
+      } catch {
+        /* Preserve the incident if independent verification is unavailable or ambiguous. */
+      }
+    }
     await getPrisma().paymentAttempt.updateMany({
       where: { id: attempt.id, status: { in: [PaymentStatus.INITIATING, PaymentStatus.PENDING] } },
       data: {

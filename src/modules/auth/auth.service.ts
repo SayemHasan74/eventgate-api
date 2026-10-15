@@ -20,6 +20,7 @@ export type PublicUser = {
   displayName: string;
   role: UserRole;
   isQuickAccess?: boolean;
+  tokenVersion?: number;
 };
 
 export type AuthResult = {
@@ -46,6 +47,7 @@ export const createAuthResult = async (
   accessToken: await signAccessToken({
     userId: user.id,
     role: user.role,
+    tokenVersion: user.tokenVersion ?? 0,
     ...(isQuickAccessAccount(user) && sessionFamilyId ? { sessionFamilyId } : {}),
   }),
   refreshToken,
@@ -225,6 +227,7 @@ export const createSessionForUser = async (
         id: true,
         email: true,
         displayName: true,
+        tokenVersion: true,
         role: true,
         status: true,
         deletedAt: true,
@@ -249,7 +252,7 @@ export const createSessionForUser = async (
         metadata,
       },
     });
-    return toPublicUser(currentUser);
+    return currentUser;
   });
 
   return createAuthResult(activeUser, session.token, session.familyId);
@@ -273,6 +276,7 @@ export const refresh = async (refreshToken: string): Promise<AuthResult> => {
             id: true,
             email: true,
             displayName: true,
+            tokenVersion: true,
             role: true,
             status: true,
             deletedAt: true,
@@ -394,7 +398,7 @@ export const refresh = async (refreshToken: string): Promise<AuthResult> => {
       },
     });
 
-    return { user: toPublicUser(currentSession.user), familyId: currentSession.familyId };
+    return { user: currentSession.user, familyId: currentSession.familyId };
   });
 
   // Throw only after security writes have committed.

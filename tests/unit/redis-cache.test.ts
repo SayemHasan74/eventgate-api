@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { client, warn } = vi.hoisted(() => ({
-  client: { isReady: true, on: vi.fn(), get: vi.fn() },
+  client: { isReady: true, isOpen: true, destroy: vi.fn(), on: vi.fn(), get: vi.fn() },
   warn: vi.fn(),
 }));
 vi.mock('redis', () => ({ createClient: () => client }));
@@ -16,6 +16,16 @@ describe('optional discovery cache', () => {
     client.get.mockRejectedValueOnce(new Error('Redis connection closed'));
     await expect(readCache('fixture')).resolves.toBeNull();
     expect(warn).toHaveBeenCalled();
+  });
+
+  it('bounds an unresponsive cache command', async () => {
+    vi.useFakeTimers();
+    client.get.mockImplementationOnce(() => new Promise(() => {}));
+    const result = readCache('stalled');
+    await vi.advanceTimersByTimeAsync(501);
+    await expect(result).resolves.toBeNull();
+    expect(client.destroy).toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
   it('returns healthy cache values and ordinary cache misses', async () => {

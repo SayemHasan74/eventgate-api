@@ -9,6 +9,7 @@ export const logger = pino({
       'req.headers.authorization',
       'req.headers.cookie',
       'req.body.password',
+      'req.body.currentPassword',
       'req.body.passwordHash',
       'req.body.accessToken',
       'req.body.refreshToken',

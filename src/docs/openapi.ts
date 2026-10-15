@@ -88,8 +88,8 @@ export const openapi = {
         tags: ['02 Authentication'],
         summary: 'Password login',
         requestBody: jsonBody({
-          email: 'attendee@eventgate.local',
-          password: 'cc88e5bf3bb34de0e07866f7',
+          email: 'YOUR_ACCOUNT_EMAIL',
+          password: 'YOUR_ACCOUNT_PASSWORD',
         }),
         responses: {
           '200': { description: 'Access and refresh tokens issued' },

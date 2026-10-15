@@ -24,7 +24,7 @@ const environmentSchema = z.object({
     )
     .default('https://eventgate-frontend-lovat.vercel.app'),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
-  API_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(10_000).default(100),
+  API_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(10_000).default(1200),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(100).default(10),
   MAINTENANCE_MAX_JOBS: z.coerce.number().int().min(1).max(1000).default(100),
   MAINTENANCE_RUN_BUDGET_MS: z.coerce.number().int().min(1000).max(120000).default(45000),
@@ -33,6 +33,7 @@ const environmentSchema = z.object({
   REDIS_URL: z.string().url().optional(),
   JWT_ACCESS_SECRET: z.string().min(32).optional(),
   JWT_REFRESH_SECRET: z.string().min(32).optional(),
+  BFF_PROXY_SECRET: z.string().min(32).optional(),
   GOOGLE_CLIENT_ID: z.string().min(1).optional(),
   RESEND_API_KEY: z.string().min(1).optional(),
   EMAIL_FROM: z.string().min(1).max(320).optional(),

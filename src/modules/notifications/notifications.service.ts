@@ -62,7 +62,10 @@ export function notificationCategory(type: string): Category {
     ? 'waitlistAlerts'
     : type.includes('SAVED')
       ? 'savedEventReminders'
-      : type === 'ROLE_CHANGED' || type === 'EMAIL_VERIFICATION'
+      : type === 'ROLE_CHANGED' ||
+          type === 'EMAIL_VERIFICATION' ||
+          type === 'PASSWORD_RESET' ||
+          type === 'CREDENTIAL_CHANGED'
         ? 'security'
         : 'bookingUpdates';
 }
@@ -100,6 +103,7 @@ export async function writeNotification(
     reminderJobId?: string;
   },
   verificationId?: string,
+  passwordResetId?: string,
 ) {
   if (!validNotificationPath(input.actionPath)) throw new Error('Unsafe notification action path.');
   const preference = await tx.notificationPreference.upsert({
@@ -121,7 +125,7 @@ export async function writeNotification(
     const allowed =
       active &&
       (channel !== 'EMAIL' || !isQuickAccessAccount(user)) &&
-      ((verificationId && channel === 'EMAIL') ||
+      (((verificationId || passwordResetId) && channel === 'EMAIL') ||
         notificationConsent(preference, input.type, channel));
     await tx.notificationDelivery.upsert({
       where: { notificationId_channel: { notificationId: notification.id, channel } },
@@ -134,6 +138,7 @@ export async function writeNotification(
         nextAttemptAt: allowed && channel === 'EMAIL' ? new Date() : null,
         error: allowed ? null : 'CONSENT_OR_ACCOUNT_DISABLED',
         ...(verificationId && channel === 'EMAIL' ? { verificationId } : {}),
+        ...(passwordResetId && channel === 'EMAIL' ? { passwordResetId } : {}),
       },
     });
   }

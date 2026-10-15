@@ -2,6 +2,7 @@ import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
 
 import { env } from '../../config/env.js';
 import { sendError } from '../responses/api-response.js';
+import { verifiedVisitorIp } from './proxy-identity.js';
 import { verifyAccessToken } from '../../modules/auth/token.service.js';
 
 const sharedOptions = {
@@ -26,7 +27,9 @@ export const apiRateLimiter = rateLimit({
         // Unverified tokens must never create arbitrary rate-limit buckets.
       }
     }
-    return ipKeyGenerator(request.ip ?? request.socket.remoteAddress ?? 'unknown');
+    return ipKeyGenerator(
+      verifiedVisitorIp(request) ?? request.ip ?? request.socket.remoteAddress ?? 'unknown',
+    );
   },
   handler: (_request, response) => {
     sendError(response, 429, 'Too many requests', [
@@ -40,6 +43,7 @@ export const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: env.AUTH_RATE_LIMIT_MAX,
   identifier: 'authentication',
+  keyGenerator: (request) => ipKeyGenerator(verifiedVisitorIp(request) ?? request.ip ?? 'unknown'),
   skipSuccessfulRequests: true,
   handler: (_request, response) => {
     sendError(response, 429, 'Too many authentication attempts', [
@@ -54,8 +58,11 @@ export const authRateLimiter = rateLimit({
 export const quickAccessRateLimiter = rateLimit({
   ...sharedOptions,
   windowMs: 15 * 60 * 1000,
-  limit: env.AUTH_RATE_LIMIT_MAX,
+  // The shared egress fallback is a coarse safety cap; signed visitor identities receive the individual budget.
+  limit: (request) =>
+    verifiedVisitorIp(request) ? env.AUTH_RATE_LIMIT_MAX : Math.max(200, env.AUTH_RATE_LIMIT_MAX),
   identifier: 'quick-access',
+  keyGenerator: (request) => ipKeyGenerator(verifiedVisitorIp(request) ?? request.ip ?? 'unknown'),
   handler: (_request, response) => {
     sendError(response, 429, 'Too many quick-access requests', [
       {

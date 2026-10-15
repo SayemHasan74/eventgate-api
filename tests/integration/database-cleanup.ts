@@ -8,6 +8,7 @@ export const cleanDatabase = async (database: PrismaClient): Promise<void> => {
   await database.notificationDelivery.deleteMany();
   await database.notification.deleteMany();
   await database.emailVerification.deleteMany();
+  await database.passwordReset.deleteMany();
   await database.notificationPreference.deleteMany();
   await database.savedEvent.deleteMany();
   await database.waitlistEntry.deleteMany();

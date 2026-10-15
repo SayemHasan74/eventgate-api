@@ -74,14 +74,16 @@ export const getProfile = async (userId: string) => {
     where: { id: userId, deletedAt: null },
     select: {
       ...userSummarySelect,
+      passwordHash: true,
       identities: { where: { provider: AuthProvider.GOOGLE }, select: { id: true }, take: 1 },
     },
   });
   if (!user) throw userNotFound();
-  const { identities, ...profile } = user;
+  const { identities, passwordHash, ...profile } = user;
   return {
     ...profile,
     googleLinked: identities.length > 0,
+    passwordLoginEnabled: !!passwordHash,
     isQuickAccess: isQuickAccessAccount(profile),
   };
 };

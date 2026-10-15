@@ -220,6 +220,79 @@ export async function reviewRefund(adminId: string, refundId: string, input: Rev
   return refund;
 }
 
+export async function queueRefundRetry(actorId: string, refundId: string, reason: string) {
+  return serializableTransaction(async (tx) => {
+    const refund = await lockedRefund(tx, refundId);
+    if (
+      refund.needsInvestigation ||
+      refund.status !== 'FAILED' ||
+      !['PROVIDER_REFUND_REJECTED', 'PROVIDER_REFUND_CONFIRMED_FAILED'].includes(
+        refund.failureCode ?? '',
+      )
+    )
+      throw financialConflict(
+        'REFUND_REQUIRES_INVESTIGATION',
+        'Only provider-confirmed failures can be retried.',
+      );
+    const key = `reconcile-refund:${refundId}`;
+    const existing = await tx.job.findUnique({ where: { deduplicationKey: key } });
+    if (
+      existing?.status === 'RUNNING' &&
+      existing.leaseExpiresAt &&
+      existing.leaseExpiresAt > new Date()
+    )
+      throw financialConflict(
+        'REFUND_RETRY_BUSY',
+        'Refund processing is finishing. Refresh before retrying.',
+      );
+    await tx.refund.update({
+      where: { id: refundId },
+      data: {
+        status: 'APPROVED',
+        failureCode: null,
+        failureMessage: null,
+        providerRefundId: null,
+        processedAt: null,
+      },
+    });
+    await tx.job.upsert({
+      where: { deduplicationKey: key },
+      create: {
+        type: 'RECONCILE_REFUND',
+        deduplicationKey: key,
+        payload: { refundId },
+        runAt: new Date(),
+      },
+      update: {
+        status: 'PENDING',
+        runAt: new Date(),
+        completedAt: null,
+        failureAttempts: 0,
+        lockedAt: null,
+        lockedBy: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+      },
+    });
+    await tx.refundActivity.create({
+      data: { refundId, actorId, action: 'REFUND_RETRY_QUEUED', note: reason },
+    });
+    await tx.auditLog.create({
+      data: {
+        actorId,
+        action: 'REFUND_RETRY_REQUESTED',
+        entityType: 'REFUND',
+        entityId: refundId,
+        metadata: {
+          reason,
+          previousFailureAttempts: existing?.failureAttempts ?? 0,
+          totalAttempts: existing?.attempts ?? 0,
+        },
+      },
+    });
+  });
+}
+
 export async function startRefund(
   refundId: string,
   adapter = new SslcommerzAdapter(),

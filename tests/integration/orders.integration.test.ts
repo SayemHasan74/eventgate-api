@@ -172,5 +172,21 @@ if (!testDatabaseUrl) {
       ).resolves.toMatchObject({ reservedQuantity: 1, soldQuantity: 0 });
       await expect(database.order.count({ where: { ticketTierId: tier.id } })).resolves.toBe(1);
     });
+    it('rejects a valid unit price whose quantity would overflow without reserving stock', async () => {
+      const attendee = await createUser(UserRole.ATTENDEE, 'Attendee');
+      const tier = await createSaleTier(10);
+      await database.ticketTier.update({
+        where: { id: tier.id },
+        data: { pricePaisa: 2147483647 },
+      });
+      await request(app)
+        .post('/api/v1/orders')
+        .set({ ...(await bearer(attendee)), 'Idempotency-Key': 'overflow' })
+        .send({ ticketTierId: tier.id, quantity: 2 })
+        .expect(400);
+      expect(await database.ticketTier.findUnique({ where: { id: tier.id } })).toMatchObject({
+        reservedQuantity: 0,
+      });
+    });
   });
 }

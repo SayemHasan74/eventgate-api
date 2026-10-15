@@ -320,7 +320,7 @@ export const listCheckInHistory = async (
   await assertEventCheckInAccess(actor, eventId);
   const where: Prisma.TicketWhereInput = {
     eventId,
-    status: TicketStatus.CHECKED_IN,
+    checkedInAt: { not: null },
     ...(query.search
       ? {
           OR: [
@@ -350,7 +350,7 @@ export const listCheckInHistory = async (
       take: query.limit,
     }),
     database.ticket.count({ where }),
-    database.ticket.count({ where: { eventId, status: TicketStatus.CHECKED_IN } }),
+    database.ticket.count({ where: { eventId, checkedInAt: { not: null } } }),
   ]);
   return { tickets, page: query.page, limit: query.limit, total, checkedInCount };
 };

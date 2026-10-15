@@ -1,3 +1,4 @@
+import { activeAdmissionSql } from '../tickets/ticket-admission.js';
 import { Prisma, UserRole } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
@@ -165,11 +166,7 @@ export async function eventAttendance(actor: Actor, eventId: string, query: Even
   >(Prisma.sql`
     SELECT COUNT(*)::bigint AS issued,
       COUNT(*) FILTER (WHERE t."checkedInAt" IS NOT NULL ${sqlDates(Prisma.sql`t."checkedInAt"`, query)})::bigint AS "checkedIn",
-      COUNT(*) FILTER (WHERE t."status" = 'ACTIVE' AND o."status" = 'PAID' AND NOT o."financialReviewRequired"
-        AND e."status" = 'PUBLISHED' AND e."deletedAt" IS NULL AND e."endAt" >= NOW()
-        AND p."status" = 'SUCCEEDED' AND p."providerTransactionId" IS NOT NULL AND p."replayOfAttemptId" IS NULL
-        AND NOT EXISTS (SELECT 1 FROM "Refund" r WHERE r."paymentAttemptId" = p."id"
-          AND (r."status" IN ('REQUESTED','APPROVED','PROCESSING','UNKNOWN','FAILED','SUCCEEDED') OR r."needsInvestigation")))::bigint AS valid
+      COUNT(*) FILTER (WHERE ${activeAdmissionSql(new Date())})::bigint AS valid
     FROM "Ticket" t JOIN "Order" o ON o."id" = t."orderId" JOIN "Event" e ON e."id" = t."eventId"
       LEFT JOIN "PaymentAttempt" p ON p."id" = o."fulfilledPaymentAttemptId"
     WHERE ${sqlOrderScope(eventId, query)}`);
