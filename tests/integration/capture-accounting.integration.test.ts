@@ -182,6 +182,36 @@ if (!testUrl) {
       ).toBe(2);
     }, 15000);
 
+    it('clears temporary verification errors after a genuine validated capture recovers', async () => {
+      const f = await fixture();
+      const attempt = await db.paymentAttempt.create({
+        data: {
+          orderId: f.order.id,
+          sequence: 1,
+          merchantTransactionId: crypto.randomUUID().replaceAll('-', '').slice(0, 30),
+          amountPaisa: 20000,
+          status: 'UNKNOWN',
+          failureCode: 'PAYMENT_LOOKUP_UNRESOLVED',
+          failureMessage: 'Temporary provider error',
+        },
+      });
+      const validation = {
+        validationId: crypto.randomUUID(),
+        merchantTransactionId: attempt.merchantTransactionId,
+        providerTransactionId: crypto.randomUUID(),
+        amountPaisa: 20000,
+        currency: 'BDT',
+        status: 'VALID',
+      };
+      await fulfillValidatedPayment(attempt.id, validation);
+      await fulfillValidatedPayment(attempt.id, validation);
+      expect(
+        await db.paymentAttempt.findUniqueOrThrow({ where: { id: attempt.id } }),
+      ).toMatchObject({ status: 'SUCCEEDED', failureCode: null, failureMessage: null });
+      expect(await db.ticket.count({ where: { orderId: f.order.id } })).toBe(2);
+      expect(await db.refund.count({ where: { orderId: f.order.id } })).toBe(0);
+    });
+
     it('simultaneous first checkouts share one attempt even with different keys', async () => {
       const f = await fixture();
       const outcomes = await Promise.all([

@@ -67,11 +67,17 @@ export const fulfillValidatedPayment = async (
     ) {
       throw new Error('Validated payment does not match its EventGate payment attempt.');
     }
-    if (attempt.status === PaymentStatus.SUCCEEDED)
+    if (attempt.status === PaymentStatus.SUCCEEDED) {
+      if (attempt.failureCode || attempt.failureMessage)
+        await tx.paymentAttempt.update({
+          where: { id: attempt.id },
+          data: { failureCode: null, failureMessage: null },
+        });
       return {
         outcome: 'already-fulfilled' as const,
         capturedAttemptId: attempt.replayOfAttemptId ?? attempt.id,
       };
+    }
 
     const existingProviderPayment = await tx.paymentAttempt.findUnique({
       where: { providerTransactionId: validation.providerTransactionId },
@@ -82,6 +88,8 @@ export const fulfillValidatedPayment = async (
         where: { id: attempt.id },
         data: {
           status: PaymentStatus.SUCCEEDED,
+          failureCode: null,
+          failureMessage: null,
           replayOfAttemptId: existingProviderPayment.id,
           completedAt: new Date(),
           providerValidationId: null,
@@ -108,6 +116,8 @@ export const fulfillValidatedPayment = async (
         where: { id: attempt.id },
         data: {
           status: PaymentStatus.SUCCEEDED,
+          failureCode: null,
+          failureMessage: null,
           providerValidationId: validation.validationId,
           providerTransactionId: validation.providerTransactionId,
           completedAt: new Date(),
@@ -134,6 +144,8 @@ export const fulfillValidatedPayment = async (
         where: { id: attempt.id },
         data: {
           status: PaymentStatus.SUCCEEDED,
+          failureCode: null,
+          failureMessage: null,
           providerValidationId: validation.validationId,
           providerTransactionId: validation.providerTransactionId,
           completedAt: now,
@@ -192,6 +204,8 @@ export const fulfillValidatedPayment = async (
         where: { id: attempt.id },
         data: {
           status: PaymentStatus.SUCCEEDED,
+          failureCode: null,
+          failureMessage: null,
           providerValidationId: validation.validationId,
           providerTransactionId: validation.providerTransactionId,
           completedAt: now,
@@ -222,6 +236,8 @@ export const fulfillValidatedPayment = async (
       where: { id: attempt.id },
       data: {
         status: PaymentStatus.SUCCEEDED,
+        failureCode: null,
+        failureMessage: null,
         providerValidationId: validation.validationId,
         providerTransactionId: validation.providerTransactionId,
         completedAt: now,
