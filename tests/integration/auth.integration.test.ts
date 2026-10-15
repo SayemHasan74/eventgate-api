@@ -21,7 +21,7 @@ if (!testDatabaseUrl) {
   process.env.DEMO_ATTENDEE_EMAIL = 'demo.attendee@eventgate.invalid';
   process.env.DEMO_ORGANIZER_EMAIL = 'demo.organizer@eventgate.invalid';
 
-  const [{ app }, { getPrisma }, { hashRefreshToken }] = await Promise.all([
+  const [{ app }, { getPrisma }, { hashRefreshToken, verifyAccessToken }] = await Promise.all([
     import('../../src/app.js'),
     import('../../src/lib/prisma.js'),
     import('../../src/modules/auth/token.service.js'),
@@ -109,6 +109,11 @@ if (!testDatabaseUrl) {
       expect(organizer.body.data.user).toMatchObject({ role: 'ORGANIZER', isQuickAccess: true });
       const sessions = await database.refreshSession.findMany({ where: { userId: attendee.id } });
       expect(new Set(sessions.map((s) => s.familyId)).size).toBe(2);
+      const firstClaims = await verifyAccessToken(first.body.data.accessToken);
+      const secondClaims = await verifyAccessToken(second.body.data.accessToken);
+      expect(firstClaims.sessionFamilyId).toBeTruthy();
+      expect(secondClaims.sessionFamilyId).toBeTruthy();
+      expect(firstClaims.sessionFamilyId).not.toBe(secondClaims.sessionFamilyId);
       await request(app).post('/api/v1/auth/demo').send({ role: 'ADMIN' }).expect(400);
       await request(app)
         .post('/api/v1/auth/demo')
@@ -123,10 +128,13 @@ if (!testDatabaseUrl) {
         .post('/api/v1/auth/logout')
         .send({ refreshToken: first.body.data.refreshToken })
         .expect(200);
-      await request(app)
+      const refreshed = await request(app)
         .post('/api/v1/auth/refresh')
         .send({ refreshToken: second.body.data.refreshToken })
         .expect(200);
+      expect((await verifyAccessToken(refreshed.body.data.accessToken)).sessionFamilyId).toBe(
+        secondClaims.sessionFamilyId,
+      );
       await database.user.update({ where: { id: attendee.id }, data: { status: 'SUSPENDED' } });
       await request(app).post('/api/v1/auth/demo').send({ role: 'ATTENDEE' }).expect(403);
     });

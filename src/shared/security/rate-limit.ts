@@ -19,7 +19,9 @@ export const apiRateLimiter = rateLimit({
     if (token) {
       try {
         const claims = await verifyAccessToken(token);
-        return `user:${claims.userId}`;
+        return claims.sessionFamilyId
+          ? `session:${claims.userId}:${claims.sessionFamilyId}`
+          : `user:${claims.userId}`;
       } catch {
         // Unverified tokens must never create arbitrary rate-limit buckets.
       }

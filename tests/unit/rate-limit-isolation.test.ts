@@ -7,6 +7,8 @@ vi.mock('../../src/config/env.js', () => ({
 }));
 vi.mock('../../src/modules/auth/token.service.js', () => ({
   verifyAccessToken: vi.fn(async (token: string) => {
+    if (['shared-one', 'shared-two'].includes(token))
+      return { userId: 'shared-account', role: 'ATTENDEE', sessionFamilyId: token };
     if (!['signed-alice', 'signed-bob'].includes(token)) throw new Error('Invalid signature');
     return { userId: token, role: 'ATTENDEE' };
   }),
@@ -18,7 +20,7 @@ describe('rate limits behind a shared frontend server', () => {
     const app = express();
     app.use(apiRateLimiter);
     app.get('/', (_req, res) => res.sendStatus(200));
-    for (const token of ['signed-alice', 'signed-bob']) {
+    for (const token of ['signed-alice', 'signed-bob', 'shared-one', 'shared-two']) {
       for (let i = 0; i < 2; i++)
         expect((await request(app).get('/').set('Authorization', `Bearer ${token}`)).status).toBe(
           200,

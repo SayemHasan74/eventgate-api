@@ -40,9 +40,14 @@ const toPublicUser = (user: PublicUser): PublicUser => ({
 export const createAuthResult = async (
   user: PublicUser,
   refreshToken: string,
+  sessionFamilyId?: string,
 ): Promise<AuthResult> => ({
   user: toPublicUser(user),
-  accessToken: await signAccessToken({ userId: user.id, role: user.role }),
+  accessToken: await signAccessToken({
+    userId: user.id,
+    role: user.role,
+    ...(isQuickAccessAccount(user) && sessionFamilyId ? { sessionFamilyId } : {}),
+  }),
   refreshToken,
   accessTokenExpiresIn: 15 * 60,
 });
@@ -126,7 +131,7 @@ export const register = async (input: RegisterInput): Promise<AuthResult> => {
       return createdUser;
     });
 
-    return createAuthResult(user, session.token);
+    return createAuthResult(user, session.token, session.familyId);
   } catch (error) {
     if (isAppError(error)) {
       throw error;
@@ -247,7 +252,7 @@ export const createSessionForUser = async (
     return toPublicUser(currentUser);
   });
 
-  return createAuthResult(activeUser, session.token);
+  return createAuthResult(activeUser, session.token, session.familyId);
 };
 
 export const refresh = async (refreshToken: string): Promise<AuthResult> => {
@@ -256,7 +261,9 @@ export const refresh = async (refreshToken: string): Promise<AuthResult> => {
   const replacementSessionId = createSessionId();
   const now = new Date();
 
-  type RefreshOutcome = { user: PublicUser; error?: never } | { error: AppError; user?: never };
+  type RefreshOutcome =
+    | { user: PublicUser; familyId: string; error?: never }
+    | { error: AppError; user?: never; familyId?: never };
   const outcome = await serializableTransaction<RefreshOutcome>(async (transaction) => {
     const currentSession = await transaction.refreshSession.findUnique({
       where: { tokenHash },
@@ -387,12 +394,12 @@ export const refresh = async (refreshToken: string): Promise<AuthResult> => {
       },
     });
 
-    return { user: toPublicUser(currentSession.user) };
+    return { user: toPublicUser(currentSession.user), familyId: currentSession.familyId };
   });
 
   // Throw only after security writes have committed.
   if (outcome.error) throw outcome.error;
-  return createAuthResult(outcome.user, replacement.token);
+  return createAuthResult(outcome.user, replacement.token, outcome.familyId);
 };
 
 export const logout = async (refreshToken: string): Promise<void> => {

@@ -122,7 +122,7 @@ export const loginWithGoogle = async (identity: VerifiedGoogleIdentity): Promise
       return createdUser;
     });
 
-    return createAuthResult(user, refreshSession.token);
+    return createAuthResult(user, refreshSession.token, refreshSession.familyId);
   } catch (error) {
     if (isAppError(error)) {
       throw error;

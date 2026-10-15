@@ -26,10 +26,15 @@ const getAccessSecret = (): Uint8Array => {
 export type AccessTokenClaims = {
   userId: string;
   role: string;
+  sessionFamilyId?: string;
 };
 
 export const signAccessToken = async (claims: AccessTokenClaims): Promise<string> =>
-  new SignJWT({ role: claims.role, tokenType: 'access' })
+  new SignJWT({
+    role: claims.role,
+    tokenType: 'access',
+    ...(claims.sessionFamilyId ? { sessionFamilyId: claims.sessionFamilyId } : {}),
+  })
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
     .setIssuer(issuer)
     .setAudience(audience)
@@ -46,7 +51,13 @@ export const verifyAccessToken = async (token: string): Promise<AccessTokenClaim
       throw new Error('Invalid access-token claims.');
     }
 
-    return { userId: payload.sub, role: payload.role };
+    return {
+      userId: payload.sub,
+      role: payload.role,
+      ...(typeof payload.sessionFamilyId === 'string'
+        ? { sessionFamilyId: payload.sessionFamilyId }
+        : {}),
+    };
   } catch (cause) {
     if (cause instanceof AppError) {
       throw cause;
