@@ -125,6 +125,33 @@ if (!testDatabaseUrl) {
       ).resolves.toMatchObject({ reservedQuantity: 0 });
     });
 
+    it('claims beyond the total-attempt limit when the failure budget is not exhausted', async () => {
+      const { order } = await fixture();
+      const job = await database.job.create({
+        data: {
+          type: JobType.EXPIRE_ORDER_RESERVATION,
+          deduplicationKey: `expire-order:${order.id}`,
+          payload: { orderId: order.id },
+          runAt: new Date(Date.now() - 60000),
+          attempts: 10,
+          failureAttempts: 0,
+          maxAttempts: 10,
+        },
+      });
+      await expect(runMaintenance('rescheduled-worker', 1)).resolves.toEqual({
+        processed: 1,
+        failed: 0,
+      });
+      await expect(database.job.findUnique({ where: { id: job.id } })).resolves.toMatchObject({
+        status: 'SUCCEEDED',
+        attempts: 11,
+        failureAttempts: 0,
+      });
+      await expect(database.order.findUnique({ where: { id: order.id } })).resolves.toMatchObject({
+        status: OrderStatus.EXPIRED,
+      });
+    });
+
     it('claims work once when maintenance workers overlap', async () => {
       const { tier, order } = await fixture();
       await Promise.all([runMaintenance('worker-a', 1), runMaintenance('worker-b', 1)]);
