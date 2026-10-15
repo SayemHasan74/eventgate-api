@@ -285,6 +285,9 @@ export async function queueRefundRetry(actorId: string, refundId: string, reason
         entityId: refundId,
         metadata: {
           reason,
+          previousProviderRefundId: refund.providerRefundId,
+          previousFailureCode: refund.failureCode,
+          previousProcessedAt: refund.processedAt?.toISOString() ?? null,
           previousFailureAttempts: existing?.failureAttempts ?? 0,
           totalAttempts: existing?.attempts ?? 0,
         },
