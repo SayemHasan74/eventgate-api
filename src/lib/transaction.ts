@@ -21,6 +21,8 @@ export const serializableTransaction = async <T>(
     try {
       return await getPrisma().$transaction(operation, {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10_000,
+        timeout: 30_000,
         ...options,
       });
     } catch (error) {

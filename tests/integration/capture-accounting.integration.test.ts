@@ -49,6 +49,7 @@ if (!testUrl) {
     import('../../src/modules/tickets/tickets.service.js'),
   ]);
   const db = getPrisma();
+  const notices = await import('../../src/modules/notifications/notifications.service.js');
   const hosted = {
     sessionKey: 'fixture-session',
     gatewayUrl: 'https://sandbox.sslcommerz.com/checkout',
@@ -159,6 +160,27 @@ if (!testUrl) {
       vi.restoreAllMocks();
       await db.$disconnect();
     });
+
+    it('atomically fulfills a verified capture when notification work exceeds five seconds', async () => {
+      const f = await fixture();
+      const original = notices.writeNotification;
+      vi.spyOn(notices, 'writeNotification').mockImplementationOnce(async (tx, ...args) => {
+        await tx.$queryRaw`SELECT 1::integer AS delayed FROM pg_sleep(5.2)`;
+        return original(tx, ...args);
+      });
+      const { attempt } = await capture(f.order.id);
+      expect((await db.order.findUniqueOrThrow({ where: { id: f.order.id } })).status).toBe('PAID');
+      expect(await db.ticket.count({ where: { orderId: f.order.id } })).toBe(2);
+      expect(
+        (await db.paymentAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).status,
+      ).toBe('SUCCEEDED');
+      const notification = await db.notification.findFirstOrThrow({
+        where: { userId: f.attendee.id, type: 'BOOKING_PAID' },
+      });
+      expect(
+        await db.notificationDelivery.count({ where: { notificationId: notification.id } }),
+      ).toBe(2);
+    }, 15000);
 
     it('simultaneous first checkouts share one attempt even with different keys', async () => {
       const f = await fixture();
