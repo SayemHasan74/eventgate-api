@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
+import { isQuickAccessAccount } from '../../shared/security/quick-access.js';
 import { Prisma } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { serializableTransaction } from '../../lib/transaction.js';
@@ -113,12 +114,13 @@ export async function writeNotification(
   });
   const user = await tx.user.findUniqueOrThrow({
     where: { id: input.userId },
-    select: { status: true, deletedAt: true, emailVerifiedAt: true },
+    select: { status: true, deletedAt: true, emailVerifiedAt: true, email: true, role: true },
   });
   const active = user.status === 'ACTIVE' && !user.deletedAt;
   for (const channel of ['IN_APP', 'EMAIL'] as const) {
     const allowed =
       active &&
+      (channel !== 'EMAIL' || !isQuickAccessAccount(user)) &&
       ((verificationId && channel === 'EMAIL') ||
         notificationConsent(preference, input.type, channel));
     await tx.notificationDelivery.upsert({
@@ -240,7 +242,11 @@ export async function requestEmailVerification(userId: string) {
     message:
       'If this account is eligible and email is configured, a verification email is queued. Sign in before opening the emailed link.',
   };
-  if (!emailAvailable()) return generic;
+  const identity = await getPrisma().user.findUnique({
+    where: { id: userId },
+    select: { email: true, role: true },
+  });
+  if (isQuickAccessAccount(identity) || !emailAvailable()) return generic;
   await serializableTransaction(async (tx) => {
     await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "User" WHERE "id" = ${userId}::uuid FOR UPDATE`);
     const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });

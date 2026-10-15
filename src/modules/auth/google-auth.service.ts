@@ -2,6 +2,7 @@ import { AuthProvider, UserRole, UserStatus } from '../../generated/prisma/clien
 import type { VerifiedGoogleIdentity } from '../../integrations/google/google-token-verifier.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError, isAppError } from '../../shared/errors/app-error.js';
+import { isQuickAccessAccount } from '../../shared/security/quick-access.js';
 import { createRefreshToken, createSessionId } from './token.service.js';
 import {
   createAuthResult,
@@ -150,6 +151,12 @@ export const linkGoogleIdentity = async (
   user: PublicUser,
   identity: VerifiedGoogleIdentity,
 ): Promise<{ alreadyLinked: boolean }> => {
+  if (isQuickAccessAccount(user))
+    throw new AppError({
+      statusCode: 403,
+      code: 'SHARED_ACCOUNT_PROTECTED',
+      message: 'Google linking is disabled for shared quick-login accounts.',
+    });
   const database = getPrisma();
 
   return database.$transaction(async (transaction) => {

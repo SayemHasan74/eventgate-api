@@ -1,5 +1,6 @@
 import type { UserRole } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
+import { env } from '../../config/env.js';
 import type { AuditLogQuery, EventReportQuery } from './reports.schemas.js';
 import { eventSales, eventInventory, eventAttendance } from './event-report.service.js';
 
@@ -87,7 +88,25 @@ export const adminOperations = async () => {
       take: 100,
     }),
   ]);
-  return { events, payments, refunds };
+  return {
+    events,
+    payments,
+    refunds,
+    configuration: {
+      payments: {
+        configured: Boolean(env.SSLCOMMERZ_STORE_ID && env.SSLCOMMERZ_STORE_PASSWORD),
+        mode: env.SSLCOMMERZ_IS_LIVE === 'true' ? 'LIVE' : 'SANDBOX',
+        callbacksConfigured: Boolean(
+          env.SSLCOMMERZ_SUCCESS_URL &&
+          env.SSLCOMMERZ_FAIL_URL &&
+          env.SSLCOMMERZ_CANCEL_URL &&
+          env.SSLCOMMERZ_IPN_URL,
+        ),
+      },
+      email: { configured: Boolean(env.RESEND_API_KEY && env.EMAIL_FROM) },
+      quickAccess: { enabled: env.PUBLIC_DEMO_ENABLED === 'true' },
+    },
+  };
 };
 
 export const auditLogs = async (query: AuditLogQuery) => {

@@ -38,8 +38,19 @@ const environmentSchema = z.object({
   EMAIL_FROM: z.string().min(1).max(320).optional(),
   EMAIL_VERIFICATION_SECRET: z.string().min(32).optional(),
   FRONTEND_URL: z.string().url().default('https://eventgate-frontend-lovat.vercel.app'),
-  DEMO_LOGIN_ENABLED: z.enum(['true', 'false']).default('false'),
-  DEMO_ENVIRONMENT: z.enum(['true', 'false']).default('false'),
+  PUBLIC_DEMO_ENABLED: z.enum(['true', 'false']).default('true'),
+  DEMO_ATTENDEE_EMAIL: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email()
+    .default('demo.attendee@eventgate.invalid'),
+  DEMO_ORGANIZER_EMAIL: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email()
+    .default('demo.organizer@eventgate.invalid'),
   SEED_ATTENDEE_EMAIL: z.string().email().optional(),
   SEED_ORGANIZER_EMAIL: z.string().email().optional(),
   SEED_ADMIN_EMAIL: z.string().email().optional(),

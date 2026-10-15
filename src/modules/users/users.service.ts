@@ -8,6 +8,7 @@ import {
 import { getPrisma } from '../../lib/prisma.js';
 import { serializableTransaction } from '../../lib/transaction.js';
 import { AppError } from '../../shared/errors/app-error.js';
+import { isQuickAccessAccount } from '../../shared/security/quick-access.js';
 
 import type { ProfileInput, UserListQuery } from './users.schemas.js';
 import { dateRange } from '../../shared/responses/read-contracts.js';
@@ -78,10 +79,24 @@ export const getProfile = async (userId: string) => {
   });
   if (!user) throw userNotFound();
   const { identities, ...profile } = user;
-  return { ...profile, googleLinked: identities.length > 0 };
+  return {
+    ...profile,
+    googleLinked: identities.length > 0,
+    isQuickAccess: isQuickAccessAccount(profile),
+  };
 };
 
 export const updateProfile = async (userId: string, input: ProfileInput) => {
+  const identity = await getPrisma().user.findUnique({
+    where: { id: userId },
+    select: { email: true, role: true },
+  });
+  if (isQuickAccessAccount(identity))
+    throw new AppError({
+      statusCode: 403,
+      code: 'SHARED_ACCOUNT_PROTECTED',
+      message: 'Profile and contact changes are disabled for the shared quick-login account.',
+    });
   await getPrisma().user.update({
     where: { id: userId },
     data: Object.fromEntries(

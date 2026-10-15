@@ -1,7 +1,7 @@
 import { Router } from 'express';
 
 import { authenticate } from '../../middleware/authenticate.js';
-import { authRateLimiter } from '../../shared/security/rate-limit.js';
+import { authRateLimiter, quickAccessRateLimiter } from '../../shared/security/rate-limit.js';
 import { validate } from '../../middleware/validate.js';
 import {
   loginController,
@@ -31,7 +31,12 @@ authRouter.post(
   registerController,
 );
 authRouter.post('/login', authRateLimiter, validate({ body: loginSchema }), loginController);
-authRouter.post('/demo', authRateLimiter, validate({ body: demoLoginSchema }), demoLoginController);
+authRouter.post(
+  '/demo',
+  quickAccessRateLimiter,
+  validate({ body: demoLoginSchema }),
+  demoLoginController,
+);
 authRouter.get('/google/config', googleConfigController);
 authRouter.post(
   '/google',

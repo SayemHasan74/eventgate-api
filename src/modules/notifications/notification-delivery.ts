@@ -3,6 +3,7 @@ import { Prisma } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { serializableTransaction } from '../../lib/transaction.js';
 import { env } from '../../config/env.js';
+import { isQuickAccessAccount } from '../../shared/security/quick-access.js';
 import { reminderStillRelevant } from '../saved-events/reminders.service.js';
 import { waitlistAlertStillRelevant } from '../waitlists/availability.service.js';
 import {
@@ -101,6 +102,7 @@ export async function deliverNotification(id: string, adapter = sendEmail) {
         (await waitlistAlertStillRelevant(tx, user.id, delivery.notification.sourceKey))) &&
       reminderEligible &&
       user.status === 'ACTIVE' &&
+      !isQuickAccessAccount(user) &&
       !user.deletedAt &&
       (!delivery.recipient || delivery.recipient === user.email) &&
       (delivery.verification

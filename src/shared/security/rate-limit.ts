@@ -48,3 +48,18 @@ export const authRateLimiter = rateLimit({
     ]);
   },
 });
+
+export const quickAccessRateLimiter = rateLimit({
+  ...sharedOptions,
+  windowMs: 15 * 60 * 1000,
+  limit: env.AUTH_RATE_LIMIT_MAX,
+  identifier: 'quick-access',
+  handler: (_request, response) => {
+    sendError(response, 429, 'Too many quick-access requests', [
+      {
+        code: 'QUICK_ACCESS_RATE_LIMITED',
+        message: 'Please wait before starting another shared-account session.',
+      },
+    ]);
+  },
+});

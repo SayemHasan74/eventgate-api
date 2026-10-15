@@ -6,6 +6,7 @@ import { getPrisma } from '../../lib/prisma.js';
 import { serializableTransaction } from '../../lib/transaction.js';
 import { AppError, isAppError } from '../../shared/errors/app-error.js';
 import type { DemoLoginInput, LoginInput, RegisterInput } from './auth.schemas.js';
+import { isQuickAccessAccount, quickAccessEmail } from '../../shared/security/quick-access.js';
 import {
   createRefreshToken,
   createSessionId,
@@ -18,6 +19,7 @@ export type PublicUser = {
   email: string;
   displayName: string;
   role: UserRole;
+  isQuickAccess?: boolean;
 };
 
 export type AuthResult = {
@@ -32,6 +34,7 @@ const toPublicUser = (user: PublicUser): PublicUser => ({
   email: user.email,
   displayName: user.displayName,
   role: user.role,
+  isQuickAccess: isQuickAccessAccount(user),
 });
 
 export const createAuthResult = async (
@@ -174,10 +177,7 @@ export const login = async (input: LoginInput): Promise<AuthResult> => {
 };
 
 export const loginDemo = async ({ role }: DemoLoginInput): Promise<AuthResult> => {
-  if (
-    env.DEMO_LOGIN_ENABLED !== 'true' ||
-    (env.NODE_ENV === 'production' && env.DEMO_ENVIRONMENT !== 'true')
-  ) {
+  if (env.PUBLIC_DEMO_ENABLED !== 'true') {
     throw new AppError({
       statusCode: 404,
       code: 'DEMO_LOGIN_DISABLED',
@@ -186,12 +186,7 @@ export const loginDemo = async ({ role }: DemoLoginInput): Promise<AuthResult> =
     });
   }
 
-  const emailByRole: Record<DemoLoginInput['role'], string | undefined> = {
-    ATTENDEE: env.SEED_ATTENDEE_EMAIL,
-    ORGANIZER: env.SEED_ORGANIZER_EMAIL,
-    ADMIN: env.SEED_ADMIN_EMAIL,
-  };
-  const email = emailByRole[role];
+  const email = quickAccessEmail(role);
   if (!email) {
     throw new AppError({
       statusCode: 503,

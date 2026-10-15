@@ -17,6 +17,9 @@ if (!testDatabaseUrl) {
 
   process.env.DATABASE_URL = testDatabaseUrl;
   process.env.JWT_ACCESS_SECRET = 'test-access-secret-that-is-at-least-thirty-two-characters';
+  process.env.PUBLIC_DEMO_ENABLED = 'true';
+  process.env.DEMO_ATTENDEE_EMAIL = 'demo.attendee@eventgate.invalid';
+  process.env.DEMO_ORGANIZER_EMAIL = 'demo.organizer@eventgate.invalid';
 
   const [{ app }, { getPrisma }, { hashRefreshToken }] = await Promise.all([
     import('../../src/app.js'),
@@ -69,6 +72,63 @@ if (!testDatabaseUrl) {
       expect(response.body.data).not.toHaveProperty('passwordHash');
       expect(response.body.data.accessToken).toEqual(expect.any(String));
       expect(response.body.data.refreshToken).toEqual(expect.any(String));
+    });
+
+    it('opens independent quick-login sessions on ordinary accounts and protects their identity', async () => {
+      const attendee = await database.user.create({
+        data: {
+          email: process.env.DEMO_ATTENDEE_EMAIL!,
+          displayName: 'Shared attendee',
+          role: 'ATTENDEE',
+        },
+      });
+      await database.user.create({
+        data: {
+          email: process.env.DEMO_ORGANIZER_EMAIL!,
+          displayName: 'Shared organizer',
+          role: 'ORGANIZER',
+        },
+      });
+      const first = await request(app)
+        .post('/api/v1/auth/demo')
+        .send({ role: 'ATTENDEE' })
+        .expect(200);
+      const second = await request(app)
+        .post('/api/v1/auth/demo')
+        .send({ role: 'ATTENDEE' })
+        .expect(200);
+      const organizer = await request(app)
+        .post('/api/v1/auth/demo')
+        .send({ role: 'ORGANIZER' })
+        .expect(200);
+      expect(first.body.data.user).toMatchObject({
+        id: attendee.id,
+        role: 'ATTENDEE',
+        isQuickAccess: true,
+      });
+      expect(organizer.body.data.user).toMatchObject({ role: 'ORGANIZER', isQuickAccess: true });
+      const sessions = await database.refreshSession.findMany({ where: { userId: attendee.id } });
+      expect(new Set(sessions.map((s) => s.familyId)).size).toBe(2);
+      await request(app).post('/api/v1/auth/demo').send({ role: 'ADMIN' }).expect(400);
+      await request(app)
+        .post('/api/v1/auth/demo')
+        .send({ role: 'ATTENDEE', email: 'owner@example.com' })
+        .expect(400);
+      await request(app)
+        .patch('/api/v1/users/me')
+        .set('Authorization', `Bearer ${first.body.data.accessToken}`)
+        .send({ displayName: 'Hijacked' })
+        .expect(403);
+      await request(app)
+        .post('/api/v1/auth/logout')
+        .send({ refreshToken: first.body.data.refreshToken })
+        .expect(200);
+      await request(app)
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken: second.body.data.refreshToken })
+        .expect(200);
+      await database.user.update({ where: { id: attendee.id }, data: { status: 'SUSPENDED' } });
+      await request(app).post('/api/v1/auth/demo').send({ role: 'ATTENDEE' }).expect(403);
     });
 
     it('rotates refresh tokens and revokes the family when an old token is reused', async () => {
