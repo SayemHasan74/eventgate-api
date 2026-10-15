@@ -4,6 +4,7 @@ import { getPrisma } from '../../lib/prisma.js';
 import { serializableTransaction } from '../../lib/transaction.js';
 import { lockOrderGraph } from '../../lib/financial-locks.js';
 import { AppError } from '../../shared/errors/app-error.js';
+import { logger } from '../../lib/logger.js';
 import {
   SslcommerzAdapter,
   SslcommerzProviderError,
@@ -259,6 +260,16 @@ export async function initiateCheckout(
       return result;
     });
   } catch (error) {
+    const failureMessage =
+      error instanceof SslcommerzProviderError
+        ? error.message
+        : `Checkout could not be confirmed (${
+            error instanceof Prisma.PrismaClientKnownRequestError ? error.code : 'INTERNAL_ERROR'
+          }). Check payment status before retrying.`;
+    logger.error(
+      { paymentAttemptId: attempt.id, failureMessage },
+      'Checkout initialization failed; payment state preserved for reconciliation',
+    );
     await getPrisma().paymentAttempt.updateMany({
       where: { id: attempt.id, status: 'INITIATING' },
       data: {
@@ -267,7 +278,7 @@ export async function initiateCheckout(
             ? 'FAILED'
             : 'UNKNOWN',
         failureCode: 'CHECKOUT_INITIALIZATION_FAILED',
-        failureMessage: 'Checkout could not be confirmed. Check payment status before retrying.',
+        failureMessage,
       },
     });
     // A fast verified callback may have completed while initiation failed.
