@@ -40,7 +40,7 @@ const getClient = async (): Promise<RedisClientType | undefined> => {
 
 export const readCache = async (key: string): Promise<string | null> => {
   try {
-    return (await getClient())?.get(key) ?? null;
+    return (await (await getClient())?.get(key)) ?? null;
   } catch (error) {
     logUnavailable(error);
     return null;

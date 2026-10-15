@@ -24,15 +24,25 @@ import {
 
 const authRouter = Router();
 
-authRouter.use(authRateLimiter);
-authRouter.post('/register', validate({ body: registerSchema }), registerController);
-authRouter.post('/login', validate({ body: loginSchema }), loginController);
-authRouter.post('/demo', validate({ body: demoLoginSchema }), demoLoginController);
+authRouter.post(
+  '/register',
+  authRateLimiter,
+  validate({ body: registerSchema }),
+  registerController,
+);
+authRouter.post('/login', authRateLimiter, validate({ body: loginSchema }), loginController);
+authRouter.post('/demo', authRateLimiter, validate({ body: demoLoginSchema }), demoLoginController);
 authRouter.get('/google/config', googleConfigController);
-authRouter.post('/google', validate({ body: googleIdTokenSchema }), googleLoginController);
+authRouter.post(
+  '/google',
+  authRateLimiter,
+  validate({ body: googleIdTokenSchema }),
+  googleLoginController,
+);
 authRouter.post(
   '/google/link',
   authenticate,
+  authRateLimiter,
   validate({ body: googleIdTokenSchema }),
   googleLinkController,
 );

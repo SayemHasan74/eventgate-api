@@ -1,7 +1,8 @@
-import { rateLimit } from 'express-rate-limit';
+import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
 
 import { env } from '../../config/env.js';
 import { sendError } from '../responses/api-response.js';
+import { verifyAccessToken } from '../../modules/auth/token.service.js';
 
 const sharedOptions = {
   standardHeaders: 'draft-8' as const,
@@ -13,6 +14,18 @@ export const apiRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: env.API_RATE_LIMIT_MAX,
   identifier: 'api',
+  keyGenerator: async (request) => {
+    const token = request.header('authorization')?.match(/^Bearer\s+(.+)$/iu)?.[1];
+    if (token) {
+      try {
+        const claims = await verifyAccessToken(token);
+        return `user:${claims.userId}`;
+      } catch {
+        // Unverified tokens must never create arbitrary rate-limit buckets.
+      }
+    }
+    return ipKeyGenerator(request.ip ?? request.socket.remoteAddress ?? 'unknown');
+  },
   handler: (_request, response) => {
     sendError(response, 429, 'Too many requests', [
       { code: 'RATE_LIMITED', message: 'Too many requests. Please try again later.' },
@@ -25,6 +38,7 @@ export const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: env.AUTH_RATE_LIMIT_MAX,
   identifier: 'authentication',
+  skipSuccessfulRequests: true,
   handler: (_request, response) => {
     sendError(response, 429, 'Too many authentication attempts', [
       {
