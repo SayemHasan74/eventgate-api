@@ -22,7 +22,7 @@ const environmentSchema = z.object({
         }),
       'must be a comma-separated list of HTTP(S) origins',
     )
-    .default('http://localhost:3000'),
+    .default('https://eventgate-frontend-lovat.vercel.app'),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
   API_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(10_000).default(100),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(100).default(10),
