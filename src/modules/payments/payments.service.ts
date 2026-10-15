@@ -384,6 +384,7 @@ export const processPaymentEvent = async (eventId: string, adapter = new Sslcomm
       },
     });
   } catch (error) {
+    let historyUnresolved = false;
     // A malformed/stale callback must not poison a verified purchase forever.
     // Only an independent merchant-history lookup plus canonical validation can close it.
     if (
@@ -397,6 +398,7 @@ export const processPaymentEvent = async (eventId: string, adapter = new Sslcomm
         const history = await adapter.lookupTransaction({
           merchantTransactionId: attempt.merchantTransactionId,
         });
+        historyUnresolved = history.status !== 'CAPTURED';
         if (
           history.status === 'CAPTURED' &&
           history.validationId === attempt.providerValidationId
@@ -449,7 +451,10 @@ export const processPaymentEvent = async (eventId: string, adapter = new Sslcomm
       where: { id: event.id },
       data: {
         processingError:
-          error instanceof Error ? error.message.slice(0, 2_000) : 'Callback processing failed.',
+          (historyUnresolved
+            ? 'Merchant history is ambiguous or unavailable. Provider investigation is required before this callback can be resolved. '
+            : '') +
+          (error instanceof Error ? error.message.slice(0, 1500) : 'Callback processing failed.'),
       },
     });
     throw new Error('Persisted payment callback verification needs retry.', { cause: error });

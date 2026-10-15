@@ -32,7 +32,13 @@ export const getPayment = async (attemptId: string, attendeeId?: string) => {
         ? {
             providerTransactionId: true,
             events: {
-              select: { id: true, eventType: true, receivedAt: true, processedAt: true },
+              select: {
+                id: true,
+                eventType: true,
+                receivedAt: true,
+                processedAt: true,
+                processingError: true,
+              },
               orderBy: [{ receivedAt: 'asc' as const }, { id: 'asc' as const }],
               take: 100,
             },
@@ -236,7 +242,13 @@ export const organizerOverview = async (organizerId: string, role = 'ORGANIZER')
     await Promise.all([
       database.event.groupBy({ by: ['status'], where, _count: true }),
       database.order.count({ where: { event: where, status: 'PAID' } }),
-      database.ticket.count({ where: { event: where, status: 'ACTIVE' } }),
+      database.$queryRaw<{ count: number }[]>(Prisma.sql`
+        SELECT COUNT(*)::int AS count FROM "Ticket" t
+        JOIN "Order" o ON o."id" = t."orderId"
+        JOIN "Event" e ON e."id" = t."eventId"
+        JOIN "PaymentAttempt" p ON p."id" = o."fulfilledPaymentAttemptId"
+        WHERE ${role === 'ADMIN' ? Prisma.sql`TRUE` : Prisma.sql`e."organizerId" = ${organizerId}::uuid`}
+          AND ${activeAdmissionSql(now)}`),
       database.event.findMany({
         where,
         select: eventSummarySelect,
@@ -259,7 +271,7 @@ export const organizerOverview = async (organizerId: string, role = 'ORGANIZER')
   return {
     eventsByStatus: Object.fromEntries(eventsByStatus.map((group) => [group.status, group._count])),
     paidOrders,
-    activeTickets,
+    activeTickets: activeTickets[0]?.count ?? 0,
     recentEvents,
     upcomingEvents,
     draftEvents,

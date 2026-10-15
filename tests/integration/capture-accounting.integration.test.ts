@@ -191,6 +191,27 @@ if (!testUrl) {
       expect(await db.ticket.count({ where: { orderId: f.order.id } })).toBe(2);
     });
 
+    it('preserves ambiguous merchant history for provider investigation', async () => {
+      const f = await fixture();
+      const { attempt } = await capture(f.order.id);
+      const event = await db.paymentEvent.create({
+        data: {
+          eventType: 'SSLCOMMERZ_SUCCESS',
+          payload: { tran_id: attempt.merchantTransactionId, val_id: 'unconfirmed' },
+          providerEventKey: crypto.randomUUID(),
+        },
+      });
+      vi.spyOn(SslcommerzAdapter.prototype, 'lookupTransaction').mockResolvedValue({
+        status: 'UNKNOWN',
+      });
+      await expect(processPaymentEvent(event.id)).rejects.toThrow('needs retry');
+      const stored = await db.paymentEvent.findUniqueOrThrow({ where: { id: event.id } });
+      expect(stored.processedAt).toBeNull();
+      expect(stored.processingError).toContain('Provider investigation');
+      expect(vi.mocked(SslcommerzAdapter.prototype.validateTransaction)).toHaveBeenCalledTimes(1);
+      expect((await db.order.findUniqueOrThrow({ where: { id: f.order.id } })).status).toBe('PAID');
+    });
+
     it('does not hide a conflicting valid capture behind canonical verification', async () => {
       const f = await fixture();
       const { attempt, validation } = await capture(f.order.id);
@@ -707,17 +728,20 @@ if (!testUrl) {
     it('excludes refund-blocked passes from the overview and retains admission after cancellation', async () => {
       const f = await fixture();
       await capture(f.order.id);
-      const { attendeeOverview } =
+      const { attendeeOverview, organizerOverview } =
         await import('../../src/modules/reports/workspace-reads.service.js');
       expect((await attendeeOverview(f.attendee.id)).activeTickets).toBe(2);
+      expect((await organizerOverview(f.organizer.id)).activeTickets).toBe(2);
       const refund = await requestRefund(f.attendee.id, f.order.id);
       expect((await attendeeOverview(f.attendee.id)).activeTickets).toBe(0);
+      expect((await organizerOverview(f.organizer.id)).activeTickets).toBe(0);
       expect((await attendeeOverview(f.attendee.id)).upcomingTickets).toHaveLength(0);
       await reviewRefund(f.admin.id, refund.id, {
         decision: 'reject',
         reviewerNote: 'Request rejected for fixture',
       });
       expect((await attendeeOverview(f.attendee.id)).activeTickets).toBe(2);
+      expect((await organizerOverview(f.organizer.id)).activeTickets).toBe(2);
       await db.event.update({
         where: { id: f.event.id },
         data: { startAt: new Date(Date.now() + 3600000) },
