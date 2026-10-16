@@ -62,6 +62,31 @@ if (!testDatabaseUrl) {
       await database.$disconnect();
     });
 
+    it('reads current identity without exposing profile secrets and rejects revoked sessions', async () => {
+      const attendee = await createUser(UserRole.ATTENDEE, 'Identity Owner');
+      const headers = await bearer(attendee);
+      const identity = await request(app).get('/api/v1/users/me/identity').set(headers).expect(200);
+      expect(identity.body.data).toEqual({
+        id: attendee.id,
+        email: attendee.email,
+        displayName: attendee.displayName,
+        role: 'ATTENDEE',
+        isQuickAccess: false,
+      });
+      await database.user.update({
+        where: { id: attendee.id },
+        data: { role: UserRole.ORGANIZER },
+      });
+      const updated = await request(app).get('/api/v1/users/me/identity').set(headers).expect(200);
+      expect(updated.body.data.role).toBe('ORGANIZER');
+      await database.user.update({
+        where: { id: attendee.id },
+        data: { tokenVersion: { increment: 1 } },
+      });
+      await request(app).get('/api/v1/users/me/identity').set(headers).expect(401);
+      await request(app).get('/api/v1/users/me/identity').expect(401);
+    });
+
     it('changes credentials and immediately revokes old access and refresh sessions', async () => {
       const { default: argon2 } = await import('argon2');
       const attendee = await createUser(UserRole.ATTENDEE, 'Password Owner');

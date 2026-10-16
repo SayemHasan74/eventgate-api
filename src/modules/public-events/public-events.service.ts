@@ -93,7 +93,9 @@ const queryEvents = async (query: DiscoveryQuery) => {
           : { startAt: 'asc' };
   const skip = (query.page - 1) * query.limit;
   const database = getPrisma();
-  const [events, total] = await database.$transaction([
+  // Independent catalogue reads do not need a transaction/extra BEGIN and COMMIT
+  // round trips. Reservation writes still use the inventory transaction.
+  const [events, total] = await Promise.all([
     database.event.findMany({
       where,
       orderBy: [orderBy, { id: 'asc' }],
@@ -170,7 +172,21 @@ export const getEventFacets = async () => {
 };
 
 export const getPublicAvailability = async (slug: string) => {
-  const event = await findPublicEvent(slug);
+  // Availability needs stock and sale windows, not descriptions or organizer joins.
+  const event = await getPrisma().event.findFirst({
+    where: { slug, status: EventStatus.PUBLISHED, deletedAt: null },
+    select: {
+      id: true,
+      status: true,
+      startAt: true,
+      endAt: true,
+      ticketTiers: {
+        where: { deletedAt: null },
+        select: publicTierSelect,
+        orderBy: [{ pricePaisa: 'asc' }, { id: 'asc' }],
+      },
+    },
+  });
   if (!event)
     throw new AppError({ statusCode: 404, code: 'NOT_FOUND', message: 'Event not found.' });
   const serverTime = new Date();

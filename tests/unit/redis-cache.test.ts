@@ -7,9 +7,12 @@ const { client, warn } = vi.hoisted(() => ({
 vi.mock('redis', () => ({ createClient: () => client }));
 vi.mock('../../src/config/env.js', () => ({ env: { REDIS_URL: 'redis://fixture.invalid' } }));
 vi.mock('../../src/lib/logger.js', () => ({ logger: { warn } }));
-const { readCache } = await import('../../src/lib/redis.js');
+const { readCache, closeRedis } = await import('../../src/lib/redis.js');
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(async () => {
+  await closeRedis();
+  vi.clearAllMocks();
+});
 
 describe('optional discovery cache', () => {
   it('treats a failed GET as a cache miss instead of failing the API request', async () => {
@@ -26,6 +29,22 @@ describe('optional discovery cache', () => {
     await expect(result).resolves.toBeNull();
     expect(client.destroy).toHaveBeenCalled();
     vi.useRealTimers();
+  });
+
+  it('skips repeated cache attempts during an outage and retries after cooldown', async () => {
+    vi.useFakeTimers();
+    try {
+      client.get.mockRejectedValueOnce(new Error('Redis unavailable'));
+      await expect(readCache('first')).resolves.toBeNull();
+      await expect(readCache('second')).resolves.toBeNull();
+      expect(client.get).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(30_001);
+      client.get.mockResolvedValueOnce('recovered');
+      await expect(readCache('third')).resolves.toBe('recovered');
+      expect(client.get).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('returns healthy cache values and ordinary cache misses', async () => {

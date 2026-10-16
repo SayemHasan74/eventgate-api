@@ -108,6 +108,21 @@ if (!testDatabaseUrl) {
       expect(listing.body.data[0].ticketTiers[0].availableQuantity).toBe(5);
     });
 
+    it('returns fresh availability after stock changes and hides unpublished events', async () => {
+      const event = await createPublishedEvent('Dhaka', 'Fresh Stock');
+      const url = `/api/v1/events/${event.slug}/availability`;
+      const first = await request(app).get(url).expect(200);
+      expect(first.body.data.ticketTiers[0].availableQuantity).toBe(5);
+      await database.ticketTier.updateMany({
+        where: { eventId: event.id },
+        data: { reservedQuantity: 4 },
+      });
+      const second = await request(app).get(url).expect(200);
+      expect(second.body.data.ticketTiers[0].availableQuantity).toBe(3);
+      await database.event.update({ where: { id: event.id }, data: { status: EventStatus.DRAFT } });
+      await request(app).get(url).expect(404);
+    });
+
     it('returns public event detail and uses PostgreSQL when Redis is not configured', async () => {
       const event = await createPublishedEvent('Dhaka', 'Caching Fallback Meetup');
 

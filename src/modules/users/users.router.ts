@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isQuickAccessAccount } from '../../shared/security/quick-access.js';
 import { authRateLimiter } from '../../shared/security/rate-limit.js';
 import { changePassword } from '../auth/password.service.js';
 import { sendSuccess } from '../../shared/responses/api-response.js';
@@ -28,6 +29,14 @@ import {
 
 const usersRouter = Router();
 usersRouter.use(authenticate);
+// Authentication already reads current role, status and token version from the database.
+// Identity checks need no second profile/Google-identity query.
+usersRouter.get('/me/identity', (request, response) => {
+  sendSuccess(response, 200, 'Identity retrieved', {
+    ...request.auth,
+    isQuickAccess: isQuickAccessAccount(request.auth),
+  });
+});
 usersRouter.get('/me', readProfile);
 usersRouter.patch('/me', validate({ body: profileSchema }), editProfile);
 

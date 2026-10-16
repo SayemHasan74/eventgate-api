@@ -6,8 +6,11 @@ import { logger } from './logger.js';
 let client: RedisClientType | undefined;
 let connectionAttempt: Promise<void> | undefined;
 let unavailableLogged = false;
+let retryAfter = 0;
+const retryDelayMs = 30_000;
 
 const logUnavailable = (error: unknown): void => {
+  retryAfter = Date.now() + retryDelayMs;
   if (!unavailableLogged) {
     logger.warn({ err: error }, 'Redis is unavailable; continuing without cache');
     unavailableLogged = true;
@@ -15,7 +18,7 @@ const logUnavailable = (error: unknown): void => {
 };
 
 const getClient = async (): Promise<RedisClientType | undefined> => {
-  if (!env.REDIS_URL) return undefined;
+  if (!env.REDIS_URL || Date.now() < retryAfter) return undefined;
   if (!client) {
     client = createClient({
       url: env.REDIS_URL,
@@ -36,6 +39,7 @@ const getClient = async (): Promise<RedisClientType | undefined> => {
       });
     await connectionAttempt;
   }
+  if (client.isReady) unavailableLogged = false;
   return client.isReady ? client : undefined;
 };
 
@@ -49,6 +53,7 @@ const bounded = async <T>(work: Promise<T>): Promise<T> => {
       }),
     ]);
   } catch (error) {
+    logUnavailable(error);
     if (client?.isOpen) client.destroy();
     client = undefined;
     throw error;
@@ -88,4 +93,7 @@ export const incrementCache = async (key: string): Promise<void> => {
 export const closeRedis = async (): Promise<void> => {
   await connectionAttempt;
   if (client?.isOpen) client.destroy();
+  client = undefined;
+  retryAfter = 0;
+  unavailableLogged = false;
 };
