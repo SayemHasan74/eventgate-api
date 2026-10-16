@@ -126,8 +126,30 @@ export const listMyBookings = async (attendeeId: string, query: TicketListQuery)
   const now = new Date();
   const where: Prisma.OrderWhereInput = {
     attendeeId,
+    // The wallet contains purchases; refund records remain in refund/order history.
+    status: 'PAID',
+    financialReviewRequired: false,
+    fulfilledPaymentAttempt: {
+      is: {
+        status: 'SUCCEEDED',
+        providerTransactionId: { not: null },
+        replayOfAttemptId: null,
+        refunds: {
+          none: {
+            OR: [
+              {
+                status: {
+                  in: ['REQUESTED', 'APPROVED', 'PROCESSING', 'UNKNOWN', 'FAILED', 'SUCCEEDED'],
+                },
+              },
+              { needsInvestigation: true },
+            ],
+          },
+        },
+      },
+    },
     ...(query.orderId ? { id: query.orderId } : {}),
-    tickets: { some: { ...(query.status ? { status: query.status } : {}) } },
+    tickets: { some: { status: query.status ?? { in: ['ACTIVE', 'CHECKED_IN'] } } },
     ...(query.period === 'past'
       ? { event: { endAt: { lt: now } } }
       : query.period === 'upcoming'
@@ -151,6 +173,7 @@ export const listMyBookings = async (attendeeId: string, query: TicketListQuery)
         ...ticketSelect.order.select,
         id: true,
         eventId: true,
+        ticketTierId: true,
         eventNameSnapshot: true,
         ticketTierNameSnapshot: true,
         quantity: true,
@@ -179,6 +202,9 @@ export const listMyBookings = async (attendeeId: string, query: TicketListQuery)
       return {
         orderId: order.id,
         eventId: order.eventId,
+        ticketTierId: order.ticketTierId,
+        canBuyMore:
+          order.event.status === 'PUBLISHED' && !order.event.deletedAt && order.event.startAt > now,
         event: order.event,
         eventNameSnapshot: order.eventNameSnapshot,
         tierName: order.ticketTierNameSnapshot,

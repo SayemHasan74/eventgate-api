@@ -119,6 +119,102 @@ if (!testUrl) {
       await db.$disconnect();
     });
 
+    it('charges additional tickets as a separate booking and keeps refunds out of My Tickets', async () => {
+      const attendee = await user(),
+        other = await user();
+      const { tier } = await event();
+      await db.ticketTier.update({ where: { id: tier.id }, data: { capacity: 10 } });
+      const headers = await auth(attendee);
+      const buy = async (quantity: number) => {
+        const response = await request(app)
+          .post('/api/v1/orders')
+          .set(headers)
+          .set('Idempotency-Key', crypto.randomUUID())
+          .send({ ticketTierId: tier.id, quantity })
+          .expect(201);
+        await pay(response.body.data);
+        return response.body.data;
+      };
+      const first = await buy(2),
+        extra = await buy(1);
+      expect(first.id).not.toBe(extra.id);
+      expect(first.totalAmountPaisaSnapshot).toBe(20000);
+      expect(extra.totalAmountPaisaSnapshot).toBe(10000);
+      const wallet = () => request(app).get('/api/v1/tickets/bookings').set(headers).expect(200);
+      const initial = (await wallet()).body;
+      expect(initial.meta.total).toBe(2);
+      expect(
+        initial.data.reduce(
+          (count: number, group: { passCount: number }) => count + group.passCount,
+          0,
+        ),
+      ).toBe(3);
+      expect(
+        initial.data.every(
+          (group: { canBuyMore: boolean; ticketTierId: string }) =>
+            group.canBuyMore && group.ticketTierId === tier.id,
+        ),
+      ).toBe(true);
+      await request(app)
+        .get(`/api/v1/orders/${first.id}`)
+        .set(await auth(other))
+        .expect(404);
+      // A refunded excess capture does not remove a valid canonical purchase.
+      const capture = await db.paymentAttempt.create({
+        data: {
+          orderId: first.id,
+          sequence: 2,
+          merchantTransactionId: crypto.randomUUID(),
+          amountPaisa: 20000,
+          status: 'SUCCEEDED',
+          providerTransactionId: crypto.randomUUID(),
+        },
+      });
+      await db.refund.create({
+        data: {
+          orderId: first.id,
+          paymentAttemptId: capture.id,
+          amountPaisa: 20000,
+          status: 'SUCCEEDED',
+          reason: 'DUPLICATE_PAYMENT',
+          idempotencyKey: crypto.randomUUID(),
+        },
+      });
+      expect((await wallet()).body.meta.total).toBe(2);
+      const requested = await request(app)
+        .post(`/api/v1/orders/${extra.id}/refund-requests`)
+        .set(headers)
+        .send({})
+        .expect(201);
+      expect(requested.body.data.status).toBe('REQUESTED');
+      const afterRequest = (await wallet()).body;
+      expect(afterRequest.meta.total).toBe(1);
+      expect(afterRequest.data[0].orderId).toBe(first.id);
+      await db.order.update({
+        where: { id: extra.id },
+        data: { status: 'REFUNDED', refundedAt: new Date() },
+      });
+      await db.ticket.updateMany({ where: { orderId: extra.id }, data: { status: 'REFUNDED' } });
+      expect((await wallet()).body.data.map((group: { orderId: string }) => group.orderId)).toEqual(
+        [first.id],
+      );
+      const refundHistory = await request(app)
+        .get('/api/v1/refund-requests')
+        .set(headers)
+        .expect(200);
+      expect(
+        refundHistory.body.data.some(
+          (refund: { id: string }) => refund.id === requested.body.data.id,
+        ),
+      ).toBe(true);
+      const unchanged = await request(app)
+        .get(`/api/v1/orders/${first.id}`)
+        .set(headers)
+        .expect(200);
+      expect(unchanged.body.data.quantity).toBe(2);
+      expect(unchanged.body.data.totalAmountPaisaSnapshot).toBe(20000);
+    });
+
     it('persists city preferences, changes real recommendations, and isolates another attendee', async () => {
       const attendee = await user(),
         other = await user(),
