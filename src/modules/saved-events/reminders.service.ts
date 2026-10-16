@@ -271,12 +271,25 @@ export async function reminderStillRelevant(
       status: 'PAID',
       financialReviewRequired: false,
       tickets: { some: { status: 'ACTIVE' } },
-      refunds: {
-        none: {
-          OR: [
-            { status: { in: ['REQUESTED', 'APPROVED', 'PROCESSING', 'UNKNOWN', 'SUCCEEDED'] } },
-            { needsInvestigation: true },
-          ],
+      // Only the fulfilled capture controls this booking's admission. A refund
+      // of a separate excess capture must not suppress its valid reminders.
+      fulfilledPaymentAttempt: {
+        is: {
+          status: 'SUCCEEDED',
+          providerTransactionId: { not: null },
+          replayOfAttemptId: null,
+          refunds: {
+            none: {
+              OR: [
+                {
+                  status: {
+                    in: ['REQUESTED', 'APPROVED', 'PROCESSING', 'UNKNOWN', 'FAILED', 'SUCCEEDED'],
+                  },
+                },
+                { needsInvestigation: true },
+              ],
+            },
+          },
         },
       },
     },

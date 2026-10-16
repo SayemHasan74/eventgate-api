@@ -160,6 +160,11 @@ export async function recommendedEvents(userId: string, limit: number) {
       return {
         heading: personalized ? 'Chosen for you' : 'Upcoming events',
         personalized,
+        explanation: !preference?.personalizationEnabled
+          ? 'Personalization is off. Events are shown by upcoming date.'
+          : personalized
+            ? 'These events match your chosen city, categories, or saved events. Browse events still shows the full catalogue.'
+            : 'No upcoming events match your preferences. Showing upcoming events instead; change your preferences or check back as new events are published.',
         serverTime: now,
         events: ranked.flatMap((row) => {
           const event = byId.get(row.id);
