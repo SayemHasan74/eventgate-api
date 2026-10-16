@@ -11,7 +11,15 @@ export const getPrisma = (): PrismaClient => {
   }
 
   if (!prisma) {
-    const adapter = new PrismaPg({ connectionString: env.DATABASE_URL });
+    const adapter = new PrismaPg({
+      connectionString: env.DATABASE_URL,
+      // Keep a small working set between actions instead of repeating TLS/auth
+      // handshakes after pg's default ten-second idle timeout.
+      min: 2,
+      max: 10,
+      idleTimeoutMillis: 60_000,
+      keepAlive: true,
+    });
     prisma = new PrismaClient({ adapter });
   }
 
