@@ -20,13 +20,14 @@ export const publicTierSelect = {
 } satisfies Prisma.TicketTierSelect;
 
 const cacheKey = (name: string, value: unknown): string =>
-  `safe-v4:${name}:${Buffer.from(JSON.stringify(value)).toString('base64url')}`;
+  `safe-v5:${name}:${Buffer.from(JSON.stringify(value)).toString('base64url')}`;
 
 export const publicProjection = (
   event: NonNullable<Awaited<ReturnType<typeof findPublicEvent>>>,
 ) => ({
   id: event.id,
   title: event.title,
+  status: event.status,
   slug: event.slug,
   description: event.description,
   category: event.category,
@@ -143,7 +144,17 @@ export const getPublicEvent = async (slug: string) => {
 
 const findPublicEvent = (slug: string) =>
   getPrisma().event.findFirst({
-    where: { slug, status: EventStatus.PUBLISHED, deletedAt: null },
+    where: {
+      slug,
+      deletedAt: null,
+      OR: [
+        { status: EventStatus.PUBLISHED },
+        {
+          status: { in: [EventStatus.COMPLETED, EventStatus.CANCELLED] },
+          publishedAt: { not: null },
+        },
+      ],
+    },
     select: {
       ...publicEventSelect,
       ticketTiers: {

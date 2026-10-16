@@ -75,6 +75,29 @@ if (!testDatabaseUrl) {
 
     afterAll(async () => database.$disconnect());
 
+    it('keeps previously published event details accessible after completion or cancellation without reopening sales', async () => {
+      const event = await createPublishedEvent('Dhaka', 'Historical event');
+      for (const status of [EventStatus.COMPLETED, EventStatus.CANCELLED]) {
+        await database.event.update({ where: { id: event.id }, data: { status } });
+        const detail = await request(app).get(`/api/v1/events/${event.slug}`).expect(200);
+        expect(detail.body.data.status).toBe(status);
+        expect(detail.body.data.title).toBe(event.title);
+        expect(detail.body.data.organizer.email).toBeUndefined();
+        const catalog = await request(app).get('/api/v1/events').expect(200);
+        expect(catalog.body.data).toHaveLength(0);
+        await request(app).get(`/api/v1/events/${event.slug}/availability`).expect(404);
+      }
+      await database.event.update({ where: { id: event.id }, data: { publishedAt: null } });
+      await request(app).get(`/api/v1/events/${event.slug}`).expect(404);
+      await database.event.update({ where: { id: event.id }, data: { status: EventStatus.DRAFT } });
+      await request(app).get(`/api/v1/events/${event.slug}`).expect(404);
+      await database.event.update({
+        where: { id: event.id },
+        data: { status: EventStatus.COMPLETED, publishedAt: new Date(), deletedAt: new Date() },
+      });
+      await request(app).get(`/api/v1/events/${event.slug}`).expect(404);
+    });
+
     it('finds only published events with filtering, pagination, and derived availability', async () => {
       const dhaka = await createPublishedEvent('Dhaka', 'Dhaka Developer Meetup');
       await createPublishedEvent('Chattogram', 'Chattogram Developer Meetup');
