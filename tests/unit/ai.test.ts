@@ -74,6 +74,8 @@ describe('bounded AI workflows', () => {
     expect(values.every((v) => v.value.ok)).toBe(true);
     expect(fixture.provider).toHaveBeenCalledTimes(1);
     expect(fixture.reserve).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fixture.provider.mock.calls[0]![1].body as string);
+    expect(body.generationConfig.responseFormat.text.mimeType).toBe('APPLICATION_JSON');
     expect((await generateJson('test', { question: 'same' }, schema, 'rules')).cached).toBe(true);
   });
   it('fails closed when shared quota cannot be reserved and never invokes the provider', async () => {

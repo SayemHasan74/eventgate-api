@@ -65,8 +65,12 @@ export async function generateJson<T>(
             generationConfig: {
               temperature: 0,
               maxOutputTokens: 512,
-              responseMimeType: 'application/json',
-              responseJsonSchema: z.toJSONSchema(schema, { unrepresentable: 'any' }),
+              responseFormat: {
+                text: {
+                  mimeType: 'APPLICATION_JSON',
+                  schema: z.toJSONSchema(schema, { unrepresentable: 'any' }),
+                },
+              },
             },
           }),
         },
@@ -80,7 +84,8 @@ export async function generateJson<T>(
           await writeCache('ai:v1:provider-cooldown', '1', 60);
           throw aiUnavailable('AI_LIMIT_REACHED', 429);
         }
-        throw aiUnavailable();
+        // Expose only a numeric status category, never provider bodies (which can contain credential details).
+        throw aiUnavailable(`AI_PROVIDER_${response.status}`);
       }
       const raw = await response.text();
       if (raw.length > 32000) throw aiUnavailable('AI_INVALID_RESPONSE', 502);
