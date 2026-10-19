@@ -15,6 +15,44 @@ export const aiUnavailable = (code = 'AI_UNAVAILABLE', statusCode = 503) =>
         : 'AI is temporarily unavailable. Standard search, event information and booking still work.',
   });
 const pending = new Map<string, Promise<unknown>>();
+// Only models documented with a free API tier are eligible. Listing availability uses no generation quota.
+const freeModels = [
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+];
+let selectedModel: Promise<string> | undefined;
+async function resolveModel(): Promise<string> {
+  if (env.GEMINI_MODEL !== 'auto') return env.GEMINI_MODEL;
+  selectedModel ??= (async () => {
+    const response = await fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000',
+      {
+        signal: AbortSignal.timeout(3000),
+        redirect: 'error',
+        headers: { 'x-goog-api-key': env.GEMINI_API_KEY! },
+      },
+    );
+    if (!response.ok) throw aiUnavailable(`AI_PROVIDER_${response.status}`);
+    const payload = (await response.json()) as {
+      models?: { name?: string; supportedGenerationMethods?: string[] }[];
+    };
+    const model = freeModels.find((id) =>
+      payload.models?.some(
+        (model) =>
+          model.name === 'models/' + id &&
+          model.supportedGenerationMethods?.includes('generateContent'),
+      ),
+    );
+    if (!model) throw aiUnavailable('AI_FREE_MODEL_UNAVAILABLE');
+    return model;
+  })().catch((error) => {
+    selectedModel = undefined;
+    throw error;
+  });
+  return selectedModel;
+}
 
 export async function generateJson<T>(
   task: string,
@@ -44,11 +82,12 @@ export async function generateJson<T>(
       throw aiUnavailable('AI_LIMIT_REACHED', 429);
     const started = Date.now();
     try {
+      const model = await resolveModel();
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL}:generateContent`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
         {
           method: 'POST',
-          signal: AbortSignal.timeout(12000),
+          signal: AbortSignal.timeout(Math.max(1000, 12000 - (Date.now() - started))),
           redirect: 'error',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY! },
           body: JSON.stringify({
@@ -104,10 +143,7 @@ export async function generateJson<T>(
       const result = schema.safeParse(JSON.parse(text ?? ''));
       if (!result.success) throw aiUnavailable('AI_INVALID_RESPONSE', 502);
       await writeCache(key, JSON.stringify(result.data), 3600);
-      logger.info(
-        { task, model: env.GEMINI_MODEL, durationMs: Date.now() - started },
-        'AI request completed',
-      );
+      logger.info({ task, model, durationMs: Date.now() - started }, 'AI request completed');
       return result.data;
     } catch (error) {
       if (error instanceof AppError) throw error;

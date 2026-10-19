@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 const fixture = vi.hoisted(() => {
   vi.stubEnv('GEMINI_API_KEY', 'fixture-secret');
+  vi.stubEnv('GEMINI_MODEL', 'gemini-2.5-flash-lite');
   vi.stubEnv('LOG_LEVEL', 'fatal');
   return {
     cache: new Map<string, string>(),

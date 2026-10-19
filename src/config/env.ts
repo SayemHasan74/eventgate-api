@@ -36,8 +36,14 @@ const environmentSchema = z.object({
   BFF_PROXY_SECRET: z.string().min(32).optional(),
   GEMINI_API_KEY: z.string().min(1).optional(),
   GEMINI_MODEL: z
-    .enum(['gemini-2.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'])
-    .default('gemini-2.5-flash-lite'),
+    .enum([
+      'auto',
+      'gemini-2.5-flash-lite',
+      'gemini-3.1-flash-lite',
+      'gemini-3.5-flash-lite',
+      'gemini-2.5-flash',
+    ])
+    .default('auto'),
   AI_DAILY_REQUEST_LIMIT: z.coerce.number().int().min(1).max(1000).default(100),
   GOOGLE_CLIENT_ID: z.string().min(1).optional(),
   RESEND_API_KEY: z.string().min(1).optional(),
