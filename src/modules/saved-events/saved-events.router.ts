@@ -11,6 +11,8 @@ import {
   saveInput,
   listSavedEvents,
   savedMembership,
+  savedMemberships,
+  membershipBatchQuery,
   saveEvent,
   removeSavedEvent,
 } from './saved-events.service.js';
@@ -22,6 +24,14 @@ savedEventsRouter.get('/', validate({ query: savedQuery }), async (r, s) => {
     result = await listSavedEvents(r.auth.id, query);
   sendList(s, 'Saved events retrieved', result.rows, paginationMeta(query, result.total));
 });
+savedEventsRouter.get('/memberships', validate({ query: membershipBatchQuery }), async (r, s) =>
+  sendSuccess(
+    s,
+    200,
+    'Saved states retrieved',
+    await savedMemberships(r.auth.id, membershipBatchQuery.parse(r.query).eventIds),
+  ),
+);
 savedEventsRouter.get('/:eventId', validate({ params, query: emptyQuerySchema }), async (r, s) =>
   sendSuccess(
     s,

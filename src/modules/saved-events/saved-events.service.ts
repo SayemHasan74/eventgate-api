@@ -40,6 +40,37 @@ async function lockSave(tx: Prisma.TransactionClient, userId: string, eventId: s
     });
   await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Event" WHERE "id"=${eventId}::uuid FOR UPDATE`);
 }
+export const membershipBatchQuery = z
+  .object({
+    eventIds: z.preprocess(
+      (value) => (typeof value === 'string' ? value.split(',') : value),
+      z.array(z.string().uuid()).min(1).max(100),
+    ),
+  })
+  .strict();
+export async function savedMemberships(userId: string, eventIds: string[]) {
+  const db = getPrisma();
+  const ids = [...new Set(eventIds)];
+  const [saved, events] = await Promise.all([
+    db.savedEvent.findMany({ where: { userId, eventId: { in: ids } }, select: savedSelect }),
+    db.event.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, status: true, deletedAt: true, startAt: true },
+    }),
+  ]);
+  const savedByEvent = new Map(saved.map((row) => [row.eventId, row]));
+  const eventsById = new Map(events.map((event) => [event.id, event]));
+  const serverTime = new Date();
+  return ids.map((eventId) => {
+    const event = eventsById.get(eventId);
+    return {
+      eventId,
+      saved: savedByEvent.get(eventId) ?? null,
+      canSave: !!event && upcomingEvent(event),
+      serverTime,
+    };
+  });
+}
 export async function savedMembership(userId: string, eventId: string) {
   const db = getPrisma();
   const [saved, event] = await Promise.all([
