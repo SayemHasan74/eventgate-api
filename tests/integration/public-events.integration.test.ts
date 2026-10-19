@@ -86,6 +86,26 @@ if (!testDatabaseUrl) {
       expect(withinBudget.body.data.map((row: { id: string }) => row.id)).toEqual([cheap.id]);
       await request(app).get('/api/v1/events?maxPricePaisa=-1').expect(400);
       await request(app).get('/api/v1/events?maxPricePaisa=1.5').expect(400);
+      for (const data of [
+        { salesPaused: true },
+        { salesStartAt: new Date(Date.now() - 86400000), salesEndAt: new Date(Date.now() - 1000) },
+        { soldQuantity: 8, reservedQuantity: 2 },
+      ]) {
+        await database.ticketTier.updateMany({ where: { eventId: cheap.id }, data });
+        expect(
+          (await request(app).get('/api/v1/events?maxPricePaisa=50000').expect(200)).body.data,
+        ).toHaveLength(0);
+        await database.ticketTier.updateMany({
+          where: { eventId: cheap.id },
+          data: {
+            salesPaused: false,
+            salesEndAt: new Date(Date.now() + 86400000),
+            soldQuantity: 3,
+            reservedQuantity: 2,
+          },
+        });
+      }
+
       await database.event.update({ where: { id: cheap.id }, data: { status: EventStatus.DRAFT } });
       expect(
         (await request(app).get('/api/v1/events?maxPricePaisa=50000').expect(200)).body.data,

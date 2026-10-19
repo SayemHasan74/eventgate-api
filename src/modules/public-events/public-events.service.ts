@@ -1,4 +1,4 @@
-import { EventStatus, type Prisma } from '../../generated/prisma/client.js';
+import { EventStatus, Prisma } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
 
@@ -60,17 +60,32 @@ export const discoverEvents = async (query: DiscoveryQuery) => {
 };
 
 const queryEvents = async (query: DiscoveryQuery) => {
+  const database = getPrisma();
+  const now = new Date();
+  // Apply budget eligibility before counting/pagination. A sold-out, paused or expired cheap tier
+  // must not make an event with only more expensive bookable tickets appear within budget.
+  const budgetMatches =
+    query.maxPricePaisa === undefined
+      ? undefined
+      : await database.$queryRaw<{ eventId: string }[]>(Prisma.sql`
+    SELECT DISTINCT t."eventId" FROM "TicketTier" t
+    WHERE t."deletedAt" IS NULL AND NOT t."salesPaused"
+      AND t."pricePaisa" <= ${query.maxPricePaisa}
+      AND t."salesStartAt" <= ${now} AND t."salesEndAt" > ${now}
+      AND t."capacity" > t."soldQuantity" + t."reservedQuantity"
+  `);
   const where: Prisma.EventWhereInput = {
     status: EventStatus.PUBLISHED,
     deletedAt: null,
-    ...(query.maxPricePaisa !== undefined
-      ? { ticketTiers: { some: { deletedAt: null, pricePaisa: { lte: query.maxPricePaisa } } } }
+    ...(budgetMatches
+      ? { id: { in: budgetMatches.map((tier) => tier.eventId) }, startAt: { gt: now } }
       : {}),
     ...(query.category ? { category: { equals: query.category, mode: 'insensitive' } } : {}),
     ...(query.city ? { city: { equals: query.city, mode: 'insensitive' } } : {}),
-    ...(query.startAfter || query.startBefore
+    ...(query.startAfter || query.startBefore || budgetMatches
       ? {
           startAt: {
+            ...(budgetMatches ? { gt: now } : {}),
             ...(query.startAfter ? { gte: query.startAfter } : {}),
             ...(query.startBefore ? { lt: query.startBefore } : {}),
           },
@@ -96,7 +111,6 @@ const queryEvents = async (query: DiscoveryQuery) => {
           ? { title: 'asc' }
           : { startAt: 'asc' };
   const skip = (query.page - 1) * query.limit;
-  const database = getPrisma();
   // Independent catalogue reads do not need a transaction/extra BEGIN and COMMIT
   // round trips. Reservation writes still use the inventory transaction.
   const [events, total] = await Promise.all([
