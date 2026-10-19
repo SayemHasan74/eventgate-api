@@ -63,6 +63,9 @@ const queryEvents = async (query: DiscoveryQuery) => {
   const where: Prisma.EventWhereInput = {
     status: EventStatus.PUBLISHED,
     deletedAt: null,
+    ...(query.maxPricePaisa !== undefined
+      ? { ticketTiers: { some: { deletedAt: null, pricePaisa: { lte: query.maxPricePaisa } } } }
+      : {}),
     ...(query.category ? { category: { equals: query.category, mode: 'insensitive' } } : {}),
     ...(query.city ? { city: { equals: query.city, mode: 'insensitive' } } : {}),
     ...(query.startAfter || query.startBefore

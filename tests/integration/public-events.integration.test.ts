@@ -75,6 +75,23 @@ if (!testDatabaseUrl) {
 
     afterAll(async () => database.$disconnect());
 
+    it('filters ticket budgets using integer paisa without exposing draft or deleted inventory', async () => {
+      const cheap = await createPublishedEvent('Dhaka', 'Affordable tech');
+      const expensive = await createPublishedEvent('Dhaka', 'Premium tech');
+      await database.ticketTier.updateMany({
+        where: { eventId: expensive.id },
+        data: { pricePaisa: 150000 },
+      });
+      const withinBudget = await request(app).get('/api/v1/events?maxPricePaisa=50000').expect(200);
+      expect(withinBudget.body.data.map((row: { id: string }) => row.id)).toEqual([cheap.id]);
+      await request(app).get('/api/v1/events?maxPricePaisa=-1').expect(400);
+      await request(app).get('/api/v1/events?maxPricePaisa=1.5').expect(400);
+      await database.event.update({ where: { id: cheap.id }, data: { status: EventStatus.DRAFT } });
+      expect(
+        (await request(app).get('/api/v1/events?maxPricePaisa=50000').expect(200)).body.data,
+      ).toHaveLength(0);
+    });
+
     it('keeps previously published event details accessible after completion or cancellation without reopening sales', async () => {
       const event = await createPublishedEvent('Dhaka', 'Historical event');
       for (const status of [EventStatus.COMPLETED, EventStatus.CANCELLED]) {

@@ -34,6 +34,11 @@ const environmentSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(32).optional(),
   JWT_REFRESH_SECRET: z.string().min(32).optional(),
   BFF_PROXY_SECRET: z.string().min(32).optional(),
+  GEMINI_API_KEY: z.string().min(1).optional(),
+  GEMINI_MODEL: z
+    .enum(['gemini-2.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'])
+    .default('gemini-2.5-flash-lite'),
+  AI_DAILY_REQUEST_LIMIT: z.coerce.number().int().min(1).max(1000).default(100),
   GOOGLE_CLIENT_ID: z.string().min(1).optional(),
   RESEND_API_KEY: z.string().min(1).optional(),
   EMAIL_FROM: z.string().min(1).max(320).optional(),

@@ -97,3 +97,32 @@ export const closeRedis = async (): Promise<void> => {
   retryAfter = 0;
   unavailableLogged = false;
 };
+
+// A shared, atomic budget prevents parallel visitors or process restarts from consuming unlimited free inference.
+export const reserveAiQuota = async (dailyLimit: number): Promise<boolean> => {
+  try {
+    const ready = await getClient();
+    if (!ready) return false;
+    const now = Date.now();
+    const script = `
+      if tonumber(redis.call('GET',KEYS[1]) or '0') >= 4 or tonumber(redis.call('GET',KEYS[2]) or '0') >= tonumber(ARGV[1]) then return 0 end
+      redis.call('INCR',KEYS[1]); redis.call('EXPIRE',KEYS[1],120)
+      redis.call('INCR',KEYS[2]); redis.call('EXPIRE',KEYS[2],172800)
+      return 1`;
+    return (
+      Number(
+        await bounded(
+          ready.eval(script, {
+            keys: [
+              `ai:v1:minute:${Math.floor(now / 60000)}`,
+              `ai:v1:day:${Math.floor(now / 86400000)}`,
+            ],
+            arguments: [String(dailyLimit)],
+          }),
+        ),
+      ) === 1
+    );
+  } catch {
+    return false;
+  }
+};

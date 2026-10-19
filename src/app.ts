@@ -9,6 +9,7 @@ import { logger } from './lib/logger.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { notFound } from './middleware/not-found.js';
 import { requestId } from './middleware/request-id.js';
+import { aiRouter } from './modules/ai/ai.router.js';
 import { authRouter } from './modules/auth/auth.router.js';
 import { healthRouter } from './modules/health/health.router.js';
 import { publicEventsRouter } from './modules/public-events/public-events.router.js';
@@ -79,6 +80,7 @@ app.get('/', (_request, response) => {
 app.get('/openapi.json', (_request, response) => response.json(openapi));
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapi, { explorer: true }));
 
+app.use('/api/v1/ai', aiRouter);
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/notifications', notificationsRouter);
 app.use('/api/v1/saved-events', savedEventsRouter);
