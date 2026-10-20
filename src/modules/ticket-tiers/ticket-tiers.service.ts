@@ -38,7 +38,7 @@ const assertSalesWindow = (
 export const listManagedTiers = async (actor: Actor, eventId: string, query: PaginationQuery) => {
   const event = await findOwnedEvent(eventId, actor);
   const where = { eventId, deletedAt: null };
-  const [tiers, total] = await getPrisma().$transaction([
+  const [tiers, total] = await Promise.all([
     getPrisma().ticketTier.findMany({
       where,
       include: { _count: { select: { orders: true } } },
@@ -85,9 +85,9 @@ export const createTicketTier = async (
         entityId: created.id,
       },
     });
-    return created;
+    return { ...created, eventSlug: event.slug };
   });
-  await invalidatePublicDiscoveryCache();
+  await invalidatePublicDiscoveryCache(false, tier.eventSlug);
   return tier;
 };
 export const updateTicketTier = async (
@@ -194,9 +194,9 @@ export const updateTicketTier = async (
         metadata: { fields: Object.keys(data) },
       },
     });
-    return saved;
+    return { ...saved, eventSlug: event.slug };
   });
-  await invalidatePublicDiscoveryCache();
+  await invalidatePublicDiscoveryCache(false, updated.eventSlug);
   return updated;
 };
 export const softDeleteTicketTier = async (actor: Actor, eventId: string, tierId: string) => {

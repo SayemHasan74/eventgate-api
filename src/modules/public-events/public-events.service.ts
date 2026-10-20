@@ -2,7 +2,7 @@ import { EventStatus, Prisma } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { AppError } from '../../shared/errors/app-error.js';
 
-import { readDiscoveryCache, writeDiscoveryCache } from './public-events.cache.js';
+import { cachedDiscovery } from './public-events.cache.js';
 import type { DiscoveryQuery } from './public-events.schemas.js';
 import { publicEventSelect } from '../../shared/responses/read-contracts.js';
 import { tierCapabilities } from '../../shared/domain/capabilities.js';
@@ -50,42 +50,33 @@ export const publicProjection = (
   })),
 });
 
-export const discoverEvents = async (query: DiscoveryQuery) => {
-  const key = cacheKey('list', query);
-  const cached = await readDiscoveryCache<Awaited<ReturnType<typeof queryEvents>>>(key);
-  if (cached) return cached;
-  const result = await queryEvents(query);
-  await writeDiscoveryCache(key, result);
-  return result;
-};
+export const discoverEvents = (query: DiscoveryQuery) =>
+  cachedDiscovery(cacheKey('list', query), () => queryEvents(query));
 
 const queryEvents = async (query: DiscoveryQuery) => {
   const database = getPrisma();
   const now = new Date();
-  // Apply budget eligibility before counting/pagination. A sold-out, paused or expired cheap tier
-  // must not make an event with only more expensive bookable tickets appear within budget.
-  const budgetMatches =
+  const budgetFilter =
     query.maxPricePaisa === undefined
-      ? undefined
-      : await database.$queryRaw<{ eventId: string }[]>(Prisma.sql`
-    SELECT DISTINCT t."eventId" FROM "TicketTier" t
-    WHERE t."deletedAt" IS NULL AND NOT t."salesPaused"
-      AND t."pricePaisa" <= ${query.maxPricePaisa}
+      ? []
+      : [
+          Prisma.sql`
+    SELECT 1 FROM "TicketTier" t WHERE t."eventId" = e."id" AND t."deletedAt" IS NULL
+      AND NOT t."salesPaused" AND t."pricePaisa" <= ${query.maxPricePaisa}
       AND t."salesStartAt" <= ${now} AND t."salesEndAt" > ${now}
       AND t."capacity" > t."soldQuantity" + t."reservedQuantity"
-  `);
+  `,
+        ];
   const where: Prisma.EventWhereInput = {
     status: EventStatus.PUBLISHED,
     deletedAt: null,
-    ...(budgetMatches
-      ? { id: { in: budgetMatches.map((tier) => tier.eventId) }, startAt: { gt: now } }
-      : {}),
+
     ...(query.category ? { category: { equals: query.category, mode: 'insensitive' } } : {}),
     ...(query.city ? { city: { equals: query.city, mode: 'insensitive' } } : {}),
-    ...(query.startAfter || query.startBefore || budgetMatches
+    ...(query.startAfter || query.startBefore || budgetFilter.length
       ? {
           startAt: {
-            ...(budgetMatches ? { gt: now } : {}),
+            ...(budgetFilter.length ? { gt: now } : {}),
             ...(query.startAfter ? { gte: query.startAfter } : {}),
             ...(query.startBefore ? { lt: query.startBefore } : {}),
           },
@@ -102,6 +93,18 @@ const queryEvents = async (query: DiscoveryQuery) => {
         }
       : {}),
   };
+  if (budgetFilter.length) {
+    const matches = await database.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT e."id" FROM "Event" e WHERE e."status" = 'PUBLISHED' AND e."deletedAt" IS NULL
+        AND e."startAt" > ${now}
+        ${query.category ? Prisma.sql`AND lower(e."category") = lower(${query.category})` : Prisma.empty}
+        ${query.city ? Prisma.sql`AND lower(e."city") = lower(${query.city})` : Prisma.empty}
+        ${query.startAfter ? Prisma.sql`AND e."startAt" >= ${query.startAfter}` : Prisma.empty}
+        ${query.startBefore ? Prisma.sql`AND e."startAt" < ${query.startBefore}` : Prisma.empty}
+        AND EXISTS (${budgetFilter[0]!})
+    `);
+    where.id = { in: matches.map((row) => row.id) };
+  }
   const orderBy: Prisma.EventOrderByWithRelationInput =
     query.sort === 'latest'
       ? { startAt: 'desc' }
@@ -141,23 +144,22 @@ const queryEvents = async (query: DiscoveryQuery) => {
   };
 };
 
-export const getPublicEvent = async (slug: string) => {
-  const key = cacheKey('detail', slug);
-  const cached = await readDiscoveryCache<ReturnType<typeof publicProjection>>(key);
-  if (cached) return cached;
-  const event = await findPublicEvent(slug);
-  if (!event) {
-    throw new AppError({
-      statusCode: 404,
-      code: 'NOT_FOUND',
-      message: 'Event not found',
-      errors: [{ code: 'NOT_FOUND', message: 'Event not found.' }],
-    });
-  }
-  const result = publicProjection(event);
-  await writeDiscoveryCache(key, result);
-  return result;
-};
+export const getPublicEvent = (slug: string) =>
+  cachedDiscovery(
+    cacheKey('detail', slug),
+    async () => {
+      const event = await findPublicEvent(slug);
+      if (!event)
+        throw new AppError({
+          statusCode: 404,
+          code: 'NOT_FOUND',
+          message: 'Event not found',
+          errors: [{ code: 'NOT_FOUND', message: 'Event not found.' }],
+        });
+      return publicProjection(event);
+    },
+    `event:${slug}`,
+  );
 
 const findPublicEvent = (slug: string) =>
   getPrisma().event.findFirst({
@@ -182,22 +184,22 @@ const findPublicEvent = (slug: string) =>
     },
   });
 
-export const getEventFacets = async () => {
-  const key = 'safe-v2:facets';
-  const cached = await readDiscoveryCache<{ categories: string[]; cities: string[] }>(key);
-  if (cached) return cached;
-  const where = { status: EventStatus.PUBLISHED, deletedAt: null };
-  const [categories, cities] = await Promise.all([
-    getPrisma().event.groupBy({ by: ['category'], where, orderBy: { category: 'asc' } }),
-    getPrisma().event.groupBy({ by: ['city'], where, orderBy: { city: 'asc' } }),
-  ]);
-  const result = {
-    categories: categories.map((row) => row.category),
-    cities: cities.map((row) => row.city),
-  };
-  await writeDiscoveryCache(key, result);
-  return result;
-};
+export const getEventFacets = () =>
+  cachedDiscovery(
+    'facets',
+    async () => {
+      const where = { status: EventStatus.PUBLISHED, deletedAt: null };
+      const [categories, cities] = await Promise.all([
+        getPrisma().event.groupBy({ by: ['category'], where, orderBy: { category: 'asc' } }),
+        getPrisma().event.groupBy({ by: ['city'], where, orderBy: { city: 'asc' } }),
+      ]);
+      return {
+        categories: categories.map((row) => row.category),
+        cities: cities.map((row) => row.city),
+      };
+    },
+    'facets',
+  );
 
 export const getPublicAvailability = async (slug: string) => {
   // Availability needs stock and sale windows, not descriptions or organizer joins.

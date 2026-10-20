@@ -72,7 +72,6 @@ organizerReportsRouter.get(
   exportEventOrders,
 );
 const adminReportsRouter = Router();
-adminReportsRouter.use(authenticate, authorize(UserRole.ADMIN));
 adminReportsRouter.use((_request, response, next) => {
   response.setHeader('Cache-Control', 'private, no-store');
   next();

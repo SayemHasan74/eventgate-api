@@ -146,7 +146,7 @@ export async function listSavedEvents(userId: string, query: z.infer<typeof save
           }
         : {}),
   };
-  const [rows, total] = await db.$transaction([
+  const [rows, total] = await Promise.all([
     db.savedEvent.findMany({
       where,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],

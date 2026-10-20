@@ -100,7 +100,7 @@ export const listPayments = async (
         }
       : {}),
   };
-  const [payments, total] = await getPrisma().$transaction([
+  const [payments, total] = await Promise.all([
     getPrisma().paymentAttempt.findMany({
       where,
       select: paymentSummarySelect,

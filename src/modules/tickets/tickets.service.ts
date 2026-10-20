@@ -101,7 +101,7 @@ export const listMyTickets = async (attendeeId: string, query: TicketListQuery) 
         }
       : {}),
   };
-  const [tickets, total] = await database.$transaction([
+  const [tickets, total] = await Promise.all([
     database.ticket.findMany({
       where,
       select: ticketSelect,
@@ -166,7 +166,7 @@ export const listMyBookings = async (attendeeId: string, query: TicketListQuery)
       : {}),
   };
   const database = getPrisma();
-  const [orders, total] = await database.$transaction([
+  const [orders, total] = await Promise.all([
     database.order.findMany({
       where,
       select: {
@@ -229,7 +229,7 @@ export const getMyTicketQr = async (attendeeId: string, ticketId: string) => {
       select: { orderId: true },
     });
     if (!identity) throw notFound();
-    await lockOrderGraph(tx, identity.orderId);
+    await lockOrderGraph(tx, identity.orderId, { inventory: false });
     const ticket = await tx.ticket.findFirst({
       where: { id: ticketId, attendeeId },
       select: { ...ticketSelect, qrToken: true },
@@ -257,7 +257,21 @@ export const getMyTicketQr = async (attendeeId: string, ticketId: string) => {
 };
 
 const assertEventCheckInAccess = async (actor: { id: string; role: UserRole }, eventId: string) => {
-  const event = await getPrisma().event.findUnique({ where: { id: eventId } });
+  const event = await getPrisma().event.findUnique({
+    where: { id: eventId },
+    select: {
+      id: true,
+      organizerId: true,
+      title: true,
+      status: true,
+      startAt: true,
+      endAt: true,
+      venue: true,
+      city: true,
+      category: true,
+      deletedAt: true,
+    },
+  });
   if (!event) throw notFound();
   if (actor.role !== UserRole.ADMIN && event.organizerId !== actor.id) {
     throw new AppError({
@@ -270,6 +284,23 @@ const assertEventCheckInAccess = async (actor: { id: string; role: UserRole }, e
   return event;
 };
 
+export async function getCheckInStatus(actor: { id: string; role: UserRole }, eventId: string) {
+  const event = await assertEventCheckInAccess(actor, eventId);
+  return {
+    id: event.id,
+    title: event.title,
+    status: event.status,
+    startAt: event.startAt,
+    endAt: event.endAt,
+    venue: event.venue,
+    city: event.city,
+    category: event.category,
+    deletedAt: event.deletedAt,
+    checkInWindow: checkInWindow(event),
+    serverTime: new Date(),
+  };
+}
+
 export const checkInTicket = async (
   actor: { id: string; role: UserRole },
   eventId: string,
@@ -279,7 +310,7 @@ export const checkInTicket = async (
     // Lock only the requested event before inspecting a token. A foreign token
     // never causes us to read or return its attendee/order details.
     await tx.$queryRaw(
-      Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR UPDATE`,
+      Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${eventId}::uuid FOR SHARE`,
     );
     const event = await tx.event.findUnique({ where: { id: eventId } });
     if (!event || (actor.role !== UserRole.ADMIN && event.organizerId !== actor.id))
@@ -290,7 +321,7 @@ export const checkInTicket = async (
     });
     if (!identity) return { resultCode: 'INVALID_TICKET' as const };
     if (identity.eventId !== eventId) return { resultCode: 'WRONG_EVENT' as const };
-    await lockOrderGraph(tx, identity.orderId);
+    await lockOrderGraph(tx, identity.orderId, { inventory: false, eventLocked: true });
     const ticket = await tx.ticket.findFirst({
       where: { eventId, qrToken: input.qrToken },
       select: { ...ticketSelect, attendee: { select: { displayName: true } } },
@@ -360,7 +391,7 @@ export const listCheckInHistory = async (
       : {}),
   };
   const database = getPrisma();
-  const [tickets, total, checkedInCount] = await database.$transaction([
+  const [tickets, total, checkedInCount] = await Promise.all([
     database.ticket.findMany({
       where,
       select: {

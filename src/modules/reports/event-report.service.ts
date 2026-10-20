@@ -69,6 +69,10 @@ type Totals = {
 };
 export async function eventSales(actor: Actor, eventId: string, query: EventReportQuery) {
   await reportAccess(actor, eventId);
+  return eventSalesData(eventId, query);
+}
+
+async function eventSalesData(eventId: string, query: EventReportQuery) {
   const canonical = canonicalSalesSql(eventId, query);
   const [totals, days] = await getPrisma().$transaction(
     async (tx) => {
@@ -124,6 +128,10 @@ export async function eventSales(actor: Actor, eventId: string, query: EventRepo
 
 export async function eventInventory(actor: Actor, eventId: string, query: EventReportQuery) {
   await reportAccess(actor, eventId);
+  return eventInventoryData(eventId, query);
+}
+
+async function eventInventoryData(eventId: string, query: EventReportQuery) {
   const tiers = await getPrisma().ticketTier.findMany({
     where: {
       eventId,
@@ -160,6 +168,10 @@ export async function eventInventory(actor: Actor, eventId: string, query: Event
 
 export async function eventAttendance(actor: Actor, eventId: string, query: EventReportQuery) {
   await reportAccess(actor, eventId);
+  return eventAttendanceData(eventId, query);
+}
+
+async function eventAttendanceData(eventId: string, query: EventReportQuery) {
   // Compare refund identity in SQL: an excess-capture refund must not invalidate the canonical passes.
   const [row] = await getPrisma().$queryRaw<
     Array<{ issued: bigint; checkedIn: bigint; valid: bigint }>
@@ -278,4 +290,18 @@ export async function* eventOrderCsv(
     cursor = orders.at(-1)!.id;
     if (orders.length < 500) return;
   }
+}
+
+export async function combinedEventStatistics(
+  actor: Actor,
+  eventId: string,
+  query: EventReportQuery = {},
+) {
+  await reportAccess(actor, eventId);
+  const [sales, inventory, attendance] = await Promise.all([
+    eventSalesData(eventId, query),
+    eventInventoryData(eventId, query),
+    eventAttendanceData(eventId, query),
+  ]);
+  return { ...sales, ...attendance, tiers: inventory.tiers, serverTime: new Date() };
 }

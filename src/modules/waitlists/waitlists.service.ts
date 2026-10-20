@@ -23,11 +23,11 @@ export const entrySelect = {
 } satisfies Prisma.WaitlistEntrySelect;
 export const entitlementWhere = (
   userId: string,
-  tierId: string,
+  tierId: string | string[],
   now = new Date(),
 ): Prisma.OrderWhereInput => ({
   attendeeId: userId,
-  ticketTierId: tierId,
+  ticketTierId: typeof tierId === 'string' ? tierId : { in: tierId },
   OR: [
     { status: 'PAID', tickets: { some: { status: { in: ['ACTIVE', 'CHECKED_IN'] } } } },
     { status: 'PENDING_PAYMENT', reservationReleasedAt: null, reservationExpiresAt: { gt: now } },
@@ -135,7 +135,7 @@ export async function closeEventWaitlists(tx: Prisma.TransactionClient, eventId:
 export async function listWaitlists(userId: string, query: z.infer<typeof waitlistQuery>) {
   const db = getPrisma(),
     where = { userId, ...(query.status ? { status: query.status } : {}) };
-  const [rows, total] = await db.$transaction([
+  const [rows, total] = await Promise.all([
     db.waitlistEntry.findMany({
       where,
       select: { ...entrySelect, ticketTier: { include: { event: true } } },
@@ -146,29 +146,34 @@ export async function listWaitlists(userId: string, query: z.infer<typeof waitli
     db.waitlistEntry.count({ where }),
   ]);
   const now = new Date();
-  const entries = await Promise.all(
-    rows.map(async (row) => {
-      const tier = row.ticketTier,
-        event = tier.event,
-        count = await db.order.count({ where: entitlementWhere(userId, tier.id, now) });
-      const { ticketTier, ...entry } = row;
-      void ticketTier;
-      return {
-        ...entry,
-        ...waitlistEligibility(event, tier, row, count > 0, now),
-        event: {
-          id: event.id,
-          title: event.title,
-          slug: event.slug,
-          startAt: event.startAt,
-          venue: event.venue,
-          city: event.city,
-          canView: event.status === 'PUBLISHED' && !event.deletedAt,
-        },
-        tier: { id: tier.id, name: tier.name, pricePaisa: tier.pricePaisa },
-        serverTime: now,
-      };
-    }),
-  );
+  const entitlements = rows.length
+    ? await db.order.groupBy({
+        by: ['ticketTierId'],
+        where: entitlementWhere(
+          userId,
+          rows.map((row) => row.ticketTierId),
+          now,
+        ),
+      })
+    : [];
+  const entitled = new Set(entitlements.map((row) => row.ticketTierId));
+  const entries = rows.map(({ ticketTier: tier, ...entry }) => {
+    const event = tier.event;
+    return {
+      ...entry,
+      ...waitlistEligibility(event, tier, entry, entitled.has(tier.id), now),
+      event: {
+        id: event.id,
+        title: event.title,
+        slug: event.slug,
+        startAt: event.startAt,
+        venue: event.venue,
+        city: event.city,
+        canView: event.status === 'PUBLISHED' && !event.deletedAt,
+      },
+      tier: { id: tier.id, name: tier.name, pricePaisa: tier.pricePaisa },
+      serverTime: now,
+    };
+  });
   return { entries, total };
 }

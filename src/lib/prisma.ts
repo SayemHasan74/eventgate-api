@@ -16,7 +16,9 @@ export const getPrisma = (): PrismaClient => {
       // Keep a small working set between actions instead of repeating TLS/auth
       // handshakes after pg's default ten-second idle timeout.
       min: 2,
-      max: 10,
+      max: env.DATABASE_POOL_MAX,
+      connectionTimeoutMillis: 5_000,
+      statement_timeout: 12_000,
       idleTimeoutMillis: 60_000,
       keepAlive: true,
     });

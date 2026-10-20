@@ -24,7 +24,8 @@
     "db:studio": "prisma studio",
     "jobs:run": "node dist/jobs/maintenance.js",
     "infra:up": "docker compose up -d",
-    "infra:down": "docker compose down"
+    "infra:down": "docker compose down",
+    "jobs:worker": "node dist/jobs/worker.js"
   },
   "repository": {
     "type": "git",

@@ -8,7 +8,7 @@ const db = vi.hoisted(() => ({
   $queryRaw: vi.fn(),
 }));
 vi.mock('../src/lib/prisma.js', () => ({ getPrisma: () => db }));
-const { eventSales, eventInventory, eventOrderCsv, csvCell } =
+const { eventSales, eventInventory, eventOrderCsv, csvCell, combinedEventStatistics } =
   await import('../src/modules/reports/event-report.service.js');
 const actor = { id: 'organizer', role: UserRole.ORGANIZER };
 const eventId = '123e4567-e89b-42d3-a456-426614174000';
@@ -81,6 +81,27 @@ describe('event financial reporting and export', () => {
       currentAvailable: 5,
     });
     expect(report.tiers[1]).toMatchObject({ currentCapacity: 0, historicalIssuedPasses: 2 });
+  });
+  it('authorizes combined statistics once and keeps constituent data authoritative', async () => {
+    db.ticketTier.findMany.mockResolvedValue([]);
+    db.$transaction.mockImplementation(async (operation) => operation(db));
+    db.$queryRaw.mockImplementation(async (query) => {
+      if (query.sql.includes('AS issued')) return [{ issued: 0n, checkedIn: 0n, valid: 0n }];
+      if (query.sql.includes('GROUP BY day')) return [];
+      return [
+        {
+          gross: 0n,
+          refunded: 0n,
+          pending: 0n,
+          purchases: 0n,
+          excess: 0n,
+          excessRefunds: 0n,
+          ambiguous: 0n,
+        },
+      ];
+    });
+    await combinedEventStatistics(actor, eventId, {});
+    expect(db.event.findUnique).toHaveBeenCalledTimes(1);
   });
   it('never exports another organizer event', async () => {
     db.event.findUnique.mockResolvedValue({ id: eventId, organizerId: 'foreign' });

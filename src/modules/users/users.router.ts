@@ -5,9 +5,7 @@ import { changePassword } from '../auth/password.service.js';
 import { sendSuccess } from '../../shared/responses/api-response.js';
 import { Router } from 'express';
 
-import { UserRole } from '../../generated/prisma/client.js';
 import { authenticate } from '../../middleware/authenticate.js';
-import { authorize } from '../../middleware/authorize.js';
 import { validate } from '../../middleware/validate.js';
 
 import {
@@ -60,7 +58,6 @@ usersRouter.post(
     ),
 );
 const adminRouter = Router();
-adminRouter.use(authenticate, authorize(UserRole.ADMIN));
 adminRouter.get('/users', validate({ query: userListQuerySchema }), readUsers);
 adminRouter.patch(
   '/users/:userId/role',

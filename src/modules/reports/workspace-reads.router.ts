@@ -23,7 +23,6 @@ import {
 
 const empty = z.object({}).strict();
 const adminReadsRouter = Router();
-adminReadsRouter.use(authenticate, authorize('ADMIN'));
 adminReadsRouter.use((_request, response, next) => {
   response.setHeader('Cache-Control', 'private, no-store');
   next();

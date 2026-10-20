@@ -117,7 +117,7 @@ export const createOrder = async (
         });
         if (identity) {
           await tx.$queryRaw(
-            Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${identity.eventId}::uuid FOR UPDATE`,
+            Prisma.sql`SELECT "id" FROM "Event" WHERE "id" = ${identity.eventId}::uuid FOR SHARE`,
           );
           await tx.$queryRaw(
             Prisma.sql`SELECT "id" FROM "TicketTier" WHERE "id" = ${input.ticketTierId}::uuid FOR UPDATE`,
@@ -251,7 +251,7 @@ export const listOrders = async (attendeeId: string, query: OrderListQuery) => {
   };
   const skip = (query.page - 1) * query.limit;
   const database = getPrisma();
-  const [orders, total] = await database.$transaction([
+  const [orders, total] = await Promise.all([
     database.order.findMany({
       where,
       select: orderSelect,

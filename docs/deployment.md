@@ -1,15 +1,17 @@
 # Deployment
 
-## Current verification status (2026-10-14)
+## Current source verification (2026-10-20)
 
-The source is pushed to the `main` branch. A readiness request to `https://eventgate-api.onrender.com/api/v1/health/ready` returned `200` once, followed by `503` responses from docs/OpenAPI requests. The current hosted revision and stable availability therefore remain unverified. The Vercel homepage returned `200`; that does not verify authenticated role workflows.
+The performance changes have been tested locally against disposable PostgreSQL and Redis instances. This does not establish that the deployed services contain these changes. Deploy the backend first: the frontend now uses lightweight notification-count and check-in-status endpoints. Production start still applies migrations before serving requests.
 
-The committed [`render.yaml`](../render.yaml) describes the API web service. The maintenance worker runs inside the service; verify its heartbeat from the admin maintenance status and logs. OAuth account/linking and SSLCommerz provider-confirmed purchase/refund require separate live evidence and are not asserted here.
+`render.yaml` describes the API web service. `EMBEDDED_MAINTENANCE=true` keeps maintenance running there by default; see [maintenance](maintenance.md) for a dedicated worker transition. An always-on API, Singapore placement for API/Redis/database, and worker provisioning must be verified in the relevant hosting accounts. The frontend `vercel.json` selects Singapore (`sin1`) for its next deployment.
+
+The new migration adds a check-in history index and partial trigram search indexes (`pg_trgm`). It was applied successfully to a disposable PostgreSQL instance. Index creation takes locks while building; schedule production rollout appropriately for the actual dataset. No production migration or hosting change was performed by the local checks.
 
 ## Render setup
 
 1. Create a PostgreSQL database and Redis instance. Use private connection URLs where the services share a Render private network.
-2. Create a Render web service from this repository, or use the Blueprint when a paid cron job is acceptable.
+2. Create a Render web service from this repository, or use the web-service Blueprint.
 3. Set the service environment variables, including `DATABASE_URL`, `REDIS_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `NODE_ENV=production`, and a specific `CORS_ORIGINS` value.
 4. Use `npm ci --include=dev && npm run db:generate && npm run build` as the build command. The explicit `--include=dev` lets TypeScript build with `NODE_ENV=production`.
 5. Use `npm run start` as the start command and `/api/v1/health/ready` as the health-check path.

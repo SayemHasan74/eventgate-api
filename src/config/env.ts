@@ -30,6 +30,8 @@ const environmentSchema = z.object({
   MAINTENANCE_RUN_BUDGET_MS: z.coerce.number().int().min(1000).max(120000).default(45000),
   PAYMENT_STALE_AFTER_MS: z.coerce.number().int().min(30000).max(3600000).default(120000),
   DATABASE_URL: z.string().url().optional(),
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(20).default(10),
+  EMBEDDED_MAINTENANCE: z.enum(['true', 'false']).default('true'),
   REDIS_URL: z.string().url().optional(),
   JWT_ACCESS_SECRET: z.string().min(32).optional(),
   JWT_REFRESH_SECRET: z.string().min(32).optional(),

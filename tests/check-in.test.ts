@@ -82,6 +82,14 @@ describe('authoritative check-in decision', () => {
     );
     expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
   });
+  it('shares event state locks and does not lock tier inventory for admission', async () => {
+    const { tx } = fixture();
+    await checkInTicket(actor, eventId, input);
+    const statements = tx.$queryRaw.mock.calls.map(([query]) => query.sql as string);
+    expect(statements.filter((sql) => sql.includes('FROM "Event"'))).toHaveLength(1);
+    expect(statements.find((sql) => sql.includes('FROM "Event"'))).toContain('FOR SHARE');
+    expect(statements.some((sql) => sql.includes('FROM "TicketTier"'))).toBe(false);
+  });
   it('does not load foreign order or attendee details', async () => {
     const { tx } = fixture();
     tx.ticket.findUnique.mockResolvedValue({ eventId: 'foreign', orderId: 'foreign-order' });

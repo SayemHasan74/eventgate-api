@@ -1,21 +1,7 @@
-import type { UserRole } from '../../generated/prisma/client.js';
 import { getPrisma } from '../../lib/prisma.js';
 import { env } from '../../config/env.js';
-import type { AuditLogQuery, EventReportQuery } from './reports.schemas.js';
-import { eventSales, eventInventory, eventAttendance } from './event-report.service.js';
-
-export const eventStatistics = async (
-  actor: { id: string; role: UserRole },
-  eventId: string,
-  query: EventReportQuery = {},
-) => {
-  const [sales, inventory, attendance] = await Promise.all([
-    eventSales(actor, eventId, query),
-    eventInventory(actor, eventId, query),
-    eventAttendance(actor, eventId, query),
-  ]);
-  return { ...sales, ...attendance, tiers: inventory.tiers, serverTime: new Date() };
-};
+import type { AuditLogQuery } from './reports.schemas.js';
+export { combinedEventStatistics as eventStatistics } from './event-report.service.js';
 
 export const platformStatistics = async () => {
   const database = getPrisma();
@@ -125,7 +111,7 @@ export const auditLogs = async (query: AuditLogQuery) => {
       : {}),
   };
   const database = getPrisma();
-  const [logs, total] = await database.$transaction([
+  const [logs, total] = await Promise.all([
     database.auditLog.findMany({
       where,
       select: {

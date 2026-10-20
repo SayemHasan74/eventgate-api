@@ -9,9 +9,10 @@ const db = vi.hoisted(() => ({
   $queryRaw: vi.fn(),
   ticketTier: { findFirst: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn() },
   user: { findUnique: vi.fn() },
-  order: { count: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
+  order: { groupBy: vi.fn(), count: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
   waitlistEntry: {
     findUnique: vi.fn(),
+    count: vi.fn(),
     findMany: vi.fn(),
     update: vi.fn(),
     updateMany: vi.fn(),
@@ -27,7 +28,7 @@ vi.mock('../src/modules/notifications/notifications.service.js', () => ({
 }));
 const { recordInventoryRelease, dispatchWaitlistWave } =
   await import('../src/modules/waitlists/availability.service.js');
-const { joinWaitlist, leaveWaitlist } =
+const { joinWaitlist, leaveWaitlist, listWaitlists } =
   await import('../src/modules/waitlists/waitlists.service.js');
 const id = '123e4567-e89b-42d3-a456-426614174000',
   now = new Date('2026-10-14T10:00:00Z');
@@ -89,6 +90,24 @@ describe('notify-only stock alerts', () => {
     expect(
       effectiveAvailability({ ...event, status: 'CANCELLED' }, { ...tier, soldQuantity: 9 }, now),
     ).toBe(0);
+  });
+  it('reads entitlements once for a whole waitlist page', async () => {
+    db.waitlistEntry.findMany.mockResolvedValue(
+      Array.from({ length: 20 }, (_, i) => ({
+        id: String(i),
+        ticketTierId: id,
+        status: 'WAITING',
+        lastNotifiedAt: null,
+        ticketTier: tier,
+      })),
+    );
+    db.waitlistEntry.count.mockResolvedValue(20);
+    db.order.groupBy.mockResolvedValue([{ ticketTierId: id }]);
+    const result = await listWaitlists('attendee', { page: 1, limit: 20 });
+    expect(result.entries).toHaveLength(20);
+    expect(db.order.groupBy).toHaveBeenCalledOnce();
+    expect(db.order.count).not.toHaveBeenCalled();
+    expect(result.entries[0]?.reason).toContain('already have a valid ticket');
   });
   it('retains cooldown when leaving and rejects early rejoining', async () => {
     db.waitlistEntry.findUnique.mockResolvedValue({

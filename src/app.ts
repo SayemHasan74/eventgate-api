@@ -4,6 +4,9 @@ import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 import swaggerUi from 'swagger-ui-express';
 
+import { authenticate } from './middleware/authenticate.js';
+import { authorize } from './middleware/authorize.js';
+
 import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { errorHandler } from './middleware/error-handler.js';
@@ -95,6 +98,7 @@ app.use('/api/v1/payments/sslcommerz', sslcommerzCallbacksRouter);
 app.use('/api/v1/payments', paymentsRouter);
 app.use('/api/v1', overviewRouter);
 app.use('/api/v1/users', usersRouter);
+app.use('/api/v1/admin', authenticate, authorize('ADMIN'));
 app.use('/api/v1/admin', adminRouter);
 app.use('/api/v1/admin', adminReadsRouter);
 app.use('/api/v1/admin', adminRefundsRouter);

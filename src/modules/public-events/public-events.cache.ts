@@ -1,28 +1,54 @@
-import { incrementCache, readCache, writeCache } from '../../lib/redis.js';
+import { incrementCache, readVersionedCache, writeVersionedCache } from '../../lib/redis.js';
 
-const discoveryVersionKey = 'eventgate:public-events:version';
-const cacheTtlSeconds = 60;
+const prefix = 'eventgate:discovery:v6:';
+const pending = new Map<string, Promise<unknown>>();
+let generation = 0;
 
-export const invalidatePublicDiscoveryCache = async (): Promise<void> => {
-  await incrementCache(discoveryVersionKey);
-};
+// Inventory changes do not invalidate category/city options. Facts changes do.
+export async function invalidatePublicDiscoveryCache(facets = false, slug?: string): Promise<void> {
+  generation++;
+  await Promise.all([
+    incrementCache(`${prefix}events:version`),
+    ...(facets ? [incrementCache(`${prefix}facets:version`)] : []),
+    ...(slug ? [incrementCache(`${prefix}event:${slug}:version`)] : []),
+  ]);
+}
 
-export const readDiscoveryCache = async <T>(suffix: string): Promise<T | undefined> => {
-  const version = (await readCache(discoveryVersionKey)) ?? '0';
-  const raw = await readCache(`eventgate:public-events:${version}:${suffix}`);
-  if (!raw) return undefined;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return undefined;
+export async function cachedDiscovery<T>(
+  suffix: string,
+  load: () => Promise<T>,
+  namespace = 'events',
+): Promise<T> {
+  const versionKey = `${prefix}${namespace}:version`;
+  const keyPrefix = `${prefix}${namespace}:`;
+  const observedGeneration = generation;
+  const observed = await readVersionedCache(versionKey, keyPrefix, suffix);
+  if (observed?.raw) {
+    try {
+      return JSON.parse(observed.raw) as T;
+    } catch {
+      /* Replace malformed public data. */
+    }
   }
-};
-
-export const writeDiscoveryCache = async <T>(suffix: string, value: T): Promise<void> => {
-  const version = (await readCache(discoveryVersionKey)) ?? '0';
-  await writeCache(
-    `eventgate:public-events:${version}:${suffix}`,
-    JSON.stringify(value),
-    cacheTtlSeconds,
-  );
-};
+  const key = `${keyPrefix}${observed?.version ?? 'unavailable'}:${observedGeneration}:${suffix}`;
+  const existing = pending.get(key);
+  if (existing) return existing as Promise<T>;
+  const work = load()
+    .then((value) => {
+      // Optional cache persistence must not delay an already completed database read.
+      // Redis CAS checks the observed version even if another process invalidated it.
+      if (observed && generation === observedGeneration)
+        void writeVersionedCache(
+          versionKey,
+          `${keyPrefix}${observed.version}:${suffix}`,
+          observed.version,
+          JSON.stringify(value),
+          30,
+        );
+      return value;
+    })
+    .finally(() => pending.delete(key));
+  // Bound coalescing bookkeeping; unique search strings must not grow memory forever.
+  if (pending.size < 256) pending.set(key, work);
+  return work;
+}

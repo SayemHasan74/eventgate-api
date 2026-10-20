@@ -83,7 +83,7 @@ export const listManagedEvents = async (actor: Actor, query: ManagedEventQuery) 
     ...(query.search ? { title: { contains: query.search, mode: 'insensitive' as const } } : {}),
     ...(query.startAfter || query.startBefore ? { startAt: dateRange(query) } : {}),
   };
-  const [events, total] = await database.$transaction([
+  const [events, total, counts] = await Promise.all([
     database.event.findMany({
       where,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -91,8 +91,8 @@ export const listManagedEvents = async (actor: Actor, query: ManagedEventQuery) 
       take: query.limit,
     }),
     database.event.count({ where }),
+    database.event.groupBy({ by: ['status'], where: base, _count: true }),
   ]);
-  const counts = await database.event.groupBy({ by: ['status'], where: base, _count: true });
   return {
     events,
     total,
@@ -119,7 +119,7 @@ export const getManagedEvent = async (actor: Actor, eventId: string, includeDele
   const readiness = publicationReadiness(event, ticketTiers);
   capabilities.canPublish = readiness.ready;
   capabilities.setupChecks.hasActiveTier = readiness.tiers.some((tier) => tier.eligible);
-  const [cancellationJob, refundCounts, paidOrders, activeTickets, pendingOrders] =
+  const [cancellationJob, refundCounts, paidOrders, activeTickets, pendingOrders, interestedCount] =
     await Promise.all([
       event.status === 'CANCELLED'
         ? getPrisma().job.findUnique({
@@ -137,6 +137,9 @@ export const getManagedEvent = async (actor: Actor, eventId: string, includeDele
       getPrisma().order.count({ where: { eventId, status: 'PAID' } }),
       getPrisma().ticket.count({ where: { eventId, status: { in: ['ACTIVE', 'CHECKED_IN'] } } }),
       getPrisma().order.count({ where: { eventId, status: 'PENDING_PAYMENT' } }),
+      getPrisma().waitlistEntry.count({
+        where: { ticketTier: { eventId }, status: { in: ['WAITING', 'NOTIFIED'] } },
+      }),
     ]);
   return {
     ...details,
@@ -145,9 +148,7 @@ export const getManagedEvent = async (actor: Actor, eventId: string, includeDele
     setupChecks: capabilities.setupChecks,
     checkInWindow: capabilities.checkInWindow,
     cancellationImpact: { paidOrders, activeTickets, pendingOrders },
-    interestedCount: await getPrisma().waitlistEntry.count({
-      where: { ticketTier: { eventId }, status: { in: ['WAITING', 'NOTIFIED'] } },
-    }),
+    interestedCount,
     cancellationState: {
       cancelledAt: event.cancelledAt,
       dispatchStatus: cancellationJob?.status ?? null,
@@ -171,7 +172,7 @@ export const createEvent = async (actorId: string, input: CreateEventInput) => {
     });
     return event;
   });
-  await invalidatePublicDiscoveryCache();
+  await invalidatePublicDiscoveryCache(true, event.slug);
   return event;
 };
 
@@ -255,7 +256,7 @@ export const updateEvent = async (actor: Actor, eventId: string, input: UpdateEv
     });
     return updated;
   });
-  await invalidatePublicDiscoveryCache();
+  await invalidatePublicDiscoveryCache(true, event.slug);
   return updated;
 };
 
@@ -288,7 +289,7 @@ export const softDeleteEvent = async (actor: Actor, eventId: string) => {
       data: { actorId: actor.id, action: 'EVENT_DELETED', entityType: 'EVENT', entityId: event.id },
     });
   });
-  await invalidatePublicDiscoveryCache();
+  await invalidatePublicDiscoveryCache(true, event.slug);
 };
 
 export const publishEvent = async (actor: Actor, eventId: string) => {
@@ -334,7 +335,7 @@ export const publishEvent = async (actor: Actor, eventId: string) => {
     });
     return updated;
   });
-  await invalidatePublicDiscoveryCache();
+  await invalidatePublicDiscoveryCache(true, event.slug);
   return updated;
 };
 
@@ -411,6 +412,6 @@ export const cancelEvent = async (
     });
     return updated;
   });
-  await invalidatePublicDiscoveryCache();
+  await invalidatePublicDiscoveryCache(true, event.slug);
   return updated;
 };

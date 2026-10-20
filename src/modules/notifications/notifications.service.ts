@@ -172,6 +172,16 @@ const noticeSelect = {
   readAt: true,
   createdAt: true,
 } satisfies Prisma.NotificationSelect;
+export async function unreadNotificationCount(userId: string) {
+  const unread = await getPrisma().notification.count({
+    where: {
+      userId,
+      readAt: null,
+      deliveries: { some: { channel: 'IN_APP', state: 'SENT' } },
+    },
+  });
+  return { unread };
+}
 export async function listNotifications(
   userId: string,
   query: z.infer<typeof notificationQuerySchema>,
@@ -190,7 +200,7 @@ export async function listNotifications(
         ? { readAt: { not: null } }
         : {}),
   };
-  const [notifications, total, unread] = await db.$transaction([
+  const [notifications, total, unread] = await Promise.all([
     db.notification.findMany({
       where,
       select: noticeSelect,

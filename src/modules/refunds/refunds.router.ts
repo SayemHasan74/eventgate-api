@@ -47,7 +47,6 @@ attendeeRefundsRouter.get(
   readRefund,
 );
 const adminRefundsRouter = Router();
-adminRefundsRouter.use(authenticate, authorize(UserRole.ADMIN));
 adminRefundsRouter.get('/refunds', validate({ query: refundListQuerySchema }), readRefunds);
 adminRefundsRouter.get(
   '/refunds/:refundId',

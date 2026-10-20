@@ -13,6 +13,7 @@ import {
   notificationQuerySchema,
   preferenceSchema,
   listNotifications,
+  unreadNotificationCount,
   readNotification,
   preferences,
   updatePreferences,
@@ -23,6 +24,10 @@ import {
 import { deliverySafeSelect } from './notification-delivery.js';
 const notificationsRouter = Router();
 notificationsRouter.use(authenticate);
+notificationsRouter.get('/unread-count', validate({ query: emptyQuerySchema }), async (r, s) =>
+  sendSuccess(s, 200, 'Unread count retrieved', await unreadNotificationCount(r.auth.id)),
+);
+
 notificationsRouter.get('/', validate({ query: notificationQuerySchema }), async (r, s) => {
   const query = notificationQuerySchema.parse(r.query),
     result = await listNotifications(r.auth.id, query);

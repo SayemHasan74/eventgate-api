@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { getCheckInStatus } from './tickets.service.js';
+import { sendSuccess } from '../../shared/responses/api-response.js';
 
 import { UserRole } from '../../generated/prisma/client.js';
 import { authenticate } from '../../middleware/authenticate.js';
@@ -47,6 +49,17 @@ checkInRouter.use((_request, response, next) => {
   next();
 });
 checkInRouter.use(authenticate, authorize(UserRole.ORGANIZER, UserRole.ADMIN));
+checkInRouter.get(
+  '/status',
+  validate({ params: eventIdParamsSchema, query: emptyQuerySchema }),
+  async (request, response) =>
+    sendSuccess(
+      response,
+      200,
+      'Check-in status retrieved',
+      await getCheckInStatus(request.auth, request.params.eventId as string),
+    ),
+);
 checkInRouter.post(
   '/',
   validate({ params: eventIdParamsSchema, body: checkInSchema }),

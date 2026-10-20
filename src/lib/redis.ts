@@ -90,6 +90,57 @@ export const incrementCache = async (key: string): Promise<void> => {
   }
 };
 
+// Fetch the namespace version and value in one Redis round trip. A cache fill
+// keeps this observed version; a concurrent invalidation cannot resurrect it.
+export async function readVersionedCache(
+  versionKey: string,
+  prefix: string,
+  suffix: string,
+): Promise<{ version: string; raw: string | null } | undefined> {
+  try {
+    const ready = await getClient();
+    if (!ready) return undefined;
+    const result = (await bounded(
+      ready.eval(
+        `
+      local version = redis.call('GET', KEYS[1]) or '0'
+      return {version, redis.call('GET', ARGV[1] .. version .. ':' .. ARGV[2]) or ''}
+    `,
+        { keys: [versionKey], arguments: [prefix, suffix] },
+      ),
+    )) as string[];
+    return { version: result[0]!, raw: result[1] || null };
+  } catch (error) {
+    logUnavailable(error);
+    return undefined;
+  }
+}
+
+export async function writeVersionedCache(
+  versionKey: string,
+  key: string,
+  version: string,
+  value: string,
+  ttl: number,
+): Promise<void> {
+  try {
+    const ready = await getClient();
+    if (ready)
+      await bounded(
+        ready.eval(
+          `
+      if (redis.call('GET', KEYS[1]) or '0') ~= ARGV[1] then return 0 end
+      redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
+      return 1
+    `,
+          { keys: [versionKey, key], arguments: [version, value, String(ttl)] },
+        ),
+      );
+  } catch (error) {
+    logUnavailable(error);
+  }
+}
+
 export const closeRedis = async (): Promise<void> => {
   await connectionAttempt;
   if (client?.isOpen) client.destroy();

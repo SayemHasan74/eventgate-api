@@ -252,15 +252,16 @@ const processCancellationBatch = async (eventId: string, context: WorkContext): 
 };
 
 const completeEvent = async (eventId: string): Promise<void> => {
-  const updated = await getPrisma().event.updateMany({
+  const updated = await getPrisma().event.updateManyAndReturn({
     where: { id: eventId, status: EventStatus.PUBLISHED, endAt: { lte: new Date() } },
     data: { status: EventStatus.COMPLETED, completedAt: new Date() },
+    select: { slug: true },
   });
-  if (updated.count > 0) {
+  if (updated.length > 0) {
     await getPrisma().auditLog.create({
       data: { action: 'EVENT_COMPLETED', entityType: 'EVENT', entityId: eventId },
     });
-    await invalidatePublicDiscoveryCache();
+    await invalidatePublicDiscoveryCache(true, updated[0]!.slug);
   }
 };
 

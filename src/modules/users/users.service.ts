@@ -126,7 +126,7 @@ export const listUsers = async (query: UserListQuery) => {
   };
   const skip = (query.page - 1) * query.limit;
   const database = getPrisma();
-  const [users, total] = await database.$transaction([
+  const [users, total] = await Promise.all([
     database.user.findMany({
       where,
       select: userSummarySelect,
