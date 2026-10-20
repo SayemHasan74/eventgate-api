@@ -69,16 +69,13 @@ const protectLastActiveAdmin = async (
   }
 };
 
-export const getProfile = async (userId: string) => {
-  const user = await getPrisma().user.findFirst({
-    where: { id: userId, deletedAt: null },
-    select: {
-      ...userSummarySelect,
-      passwordHash: true,
-      identities: { where: { provider: AuthProvider.GOOGLE }, select: { id: true }, take: 1 },
-    },
-  });
-  if (!user) throw userNotFound();
+const profileSelect = {
+  ...userSummarySelect,
+  passwordHash: true,
+  identities: { where: { provider: AuthProvider.GOOGLE }, select: { id: true }, take: 1 },
+} satisfies Prisma.UserSelect;
+
+const profileRead = (user: Prisma.UserGetPayload<{ select: typeof profileSelect }>) => {
   const { identities, passwordHash, ...profile } = user;
   return {
     ...profile,
@@ -86,6 +83,15 @@ export const getProfile = async (userId: string) => {
     passwordLoginEnabled: !!passwordHash,
     isQuickAccess: isQuickAccessAccount(profile),
   };
+};
+
+export const getProfile = async (userId: string) => {
+  const user = await getPrisma().user.findFirst({
+    where: { id: userId, deletedAt: null },
+    select: profileSelect,
+  });
+  if (!user) throw userNotFound();
+  return profileRead(user);
 };
 
 export const updateProfile = async (userId: string, input: ProfileInput) => {
@@ -99,14 +105,14 @@ export const updateProfile = async (userId: string, input: ProfileInput) => {
       code: 'SHARED_ACCOUNT_PROTECTED',
       message: 'Profile and contact changes are disabled for the shared quick-login account.',
     });
-  await getPrisma().user.update({
+  const user = await getPrisma().user.update({
     where: { id: userId },
     data: Object.fromEntries(
       Object.entries(input).filter(([, value]) => value !== undefined),
     ) as Prisma.UserUpdateInput,
-    select: userSummarySelect,
+    select: profileSelect,
   });
-  return getProfile(userId);
+  return profileRead(user);
 };
 
 export const listUsers = async (query: UserListQuery) => {

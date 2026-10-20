@@ -119,7 +119,7 @@ export const getManagedEvent = async (actor: Actor, eventId: string, includeDele
   const readiness = publicationReadiness(event, ticketTiers);
   capabilities.canPublish = readiness.ready;
   capabilities.setupChecks.hasActiveTier = readiness.tiers.some((tier) => tier.eligible);
-  const [cancellationJob, refundCounts, paidOrders, activeTickets, pendingOrders, interestedCount] =
+  const [cancellationJob, refundCounts, orderCounts, activeTickets, interestedCount] =
     await Promise.all([
       event.status === 'CANCELLED'
         ? getPrisma().job.findUnique({
@@ -134,9 +134,12 @@ export const getManagedEvent = async (actor: Actor, eventId: string, includeDele
             _count: true,
           })
         : [],
-      getPrisma().order.count({ where: { eventId, status: 'PAID' } }),
+      getPrisma().order.groupBy({
+        by: ['status'],
+        where: { eventId, status: { in: ['PAID', 'PENDING_PAYMENT'] } },
+        _count: true,
+      }),
       getPrisma().ticket.count({ where: { eventId, status: { in: ['ACTIVE', 'CHECKED_IN'] } } }),
-      getPrisma().order.count({ where: { eventId, status: 'PENDING_PAYMENT' } }),
       getPrisma().waitlistEntry.count({
         where: { ticketTier: { eventId }, status: { in: ['WAITING', 'NOTIFIED'] } },
       }),
@@ -147,7 +150,11 @@ export const getManagedEvent = async (actor: Actor, eventId: string, includeDele
     publicationReadiness: readiness,
     setupChecks: capabilities.setupChecks,
     checkInWindow: capabilities.checkInWindow,
-    cancellationImpact: { paidOrders, activeTickets, pendingOrders },
+    cancellationImpact: {
+      paidOrders: orderCounts.find((row) => row.status === 'PAID')?._count ?? 0,
+      activeTickets,
+      pendingOrders: orderCounts.find((row) => row.status === 'PENDING_PAYMENT')?._count ?? 0,
+    },
     interestedCount,
     cancellationState: {
       cancelledAt: event.cancelledAt,

@@ -70,13 +70,13 @@ const ticketSelect = {
 const ticketRead = (ticket: Prisma.TicketGetPayload<{ select: typeof ticketSelect }>) => {
   const { order, ...safeTicket } = ticket;
   const serverTime = new Date();
+  const admissionState = effectiveAdmissionState(ticket, serverTime);
+  const window = checkInWindow(ticket.event, serverTime);
   return {
     ...safeTicket,
-    effectiveAdmissionState: effectiveAdmissionState(ticket, serverTime),
-    canShowQr:
-      effectiveAdmissionState(ticket, serverTime) === 'ACTIVE' &&
-      checkInWindow(ticket.event, serverTime).isOpen,
-    checkInWindow: checkInWindow(ticket.event, serverTime),
+    effectiveAdmissionState: admissionState,
+    canShowQr: admissionState === 'ACTIVE' && window.isOpen,
+    checkInWindow: window,
     refundEligibility: refundEligibility(order, serverTime),
     serverTime,
   };

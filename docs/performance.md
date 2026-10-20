@@ -65,3 +65,19 @@ Hosting integrations were discovered but were not connected during implementatio
 - [Render Free idle behavior](https://render.com/docs/free#spinning-down-on-idle): application code cannot remove the platform's idle spin-up.
 - [PostgreSQL trigram indexes](https://www.postgresql.org/docs/17/pgtrgm.html): GIN supports the existing ILIKE substring queries.
 - [Neon extension support](https://neon.com/blog/ten-most-popular-postgres-extensions): pg_trgm is available on Neon.
+
+## Follow-up page and call optimization (20 October 2026)
+
+The follow-up frontend revision removes image hydration gating, serves responsive Unsplash cover candidates directly from that CDN, prioritizes the first row, and prefetches full event details on hover/focus/touch intent. Catalogue results and optional city/category suggestions stream independently. Their repeated facet reads share one request-local React cache entry.
+
+Private URL filters now use Next's native history integration. Seven shared GET filter forms retain native GET fallback while avoiding a document reload after hydration. Abandoned attendee, organizer, admin-list, and report reads consume query cancellation signals; caller cancellation is combined with the existing request deadline. Cancellation stops browser/BFF fetches, but does not guarantee cancellation of a query already executing in PostgreSQL. Saving one card no longer refetches other card memberships.
+
+Managed-event subpages, profiles and refund details reuse the existing WorkspaceQuery boundary and existing schemas for initial server reads. This moves their first request ahead of client hydration; private API authorization and authoritative payment, stock and admission checks remain in place. No private cross-request cache was introduced. SSR hydration trades earlier loading for a server read on route rendering; it is not a guarantee of fewer calls on every navigation.
+
+Backend follow-up changes combine the paid/pending event counts in one groupBy, return the profile projection directly from an update, and compute admission/window values once per ticket response. The replaced counts, profile reread, duplicate calculations and hidden-image CSS were removed.
+
+Validation: backend check and all 189 tests passed against isolated local PostgreSQL and Redis. Frontend production build/lint, 40 contract/transport tests, 10 session tests and one production BFF test passed. A local browser walkthrough verified catalogue/detail covers, ticket availability, sign-in return preservation, reservation creation and booking details. The browser tool stalled on its cancellation confirmation; browser cancellation and the final shared-form interaction were not verified. Backend cancellation/race integration checks passed. No real payment was initiated.
+
+A live catalogue read timed out after 25 seconds; its immediate follow-up returned HTTP 200 after 22.3 seconds. This is a small sample consistent with service wake-up or upstream delay, not a diagnosed root cause or a before/after speed claim. Hosting regions, always-on service, worker rollout, production deployment completion and live Core Web Vitals remain unverified.
+
+Responsive image source reference: [Unsplash dynamic images](https://unsplash.com/documentation#dynamically-resizable-images). Other providers and signed/explicit-height URLs retain their original image source.
